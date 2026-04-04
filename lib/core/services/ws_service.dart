@@ -1,17 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../config/env.dart';
 
 class WsService {
   WebSocketChannel? _channel;
-  final _transcriptController = StreamController<Map<String, dynamic>>.broadcast();
+  @protected
+  final transcriptController = StreamController<Map<String, dynamic>>.broadcast();
   final _audioController = StreamController<Uint8List>.broadcast();
 
-  Stream<Map<String, dynamic>> get transcriptStream => _transcriptController.stream;
+  Stream<Map<String, dynamic>> get transcriptStream => transcriptController.stream;
   Stream<Uint8List> get audioStream => _audioController.stream;
 
   bool get isConnected => _channel != null;
@@ -29,13 +30,13 @@ class WsService {
       (message) {
         if (message is String) {
           final data = jsonDecode(message) as Map<String, dynamic>;
-          _transcriptController.add(data);
+          transcriptController.add(data);
         } else if (message is List<int>) {
           _audioController.add(Uint8List.fromList(message));
         }
       },
       onError: (error) {
-        _transcriptController.addError(error);
+        transcriptController.addError(error);
       },
       onDone: () {
         disconnect();
@@ -54,7 +55,7 @@ class WsService {
 
   void dispose() {
     disconnect();
-    _transcriptController.close();
+    transcriptController.close();
     _audioController.close();
   }
 }

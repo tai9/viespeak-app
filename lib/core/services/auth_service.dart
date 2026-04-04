@@ -1,16 +1,28 @@
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:http/http.dart' as http;
 
-class AuthService {
-  final SupabaseClient _supabase = Supabase.instance.client;
+import '../config/env.dart';
 
-  User? get currentUser => _supabase.auth.currentUser;
+class AuthService extends ChangeNotifier {
+  String? _token;
+  Map<String, dynamic>? _user;
 
-  bool get isSignedIn => currentUser != null;
+  String? get token => _token;
+  Map<String, dynamic>? get user => _user;
+  bool get isSignedIn => _token != null;
+  String get userName => _user?['name']?.toString().split(' ').first ?? 'there';
 
-  Stream<AuthState> get authStateChanges => _supabase.auth.onAuthStateChange;
+  @protected
+  void setSession({required String token, required Map<String, dynamic> user}) {
+    _token = token;
+    _user = user;
+    notifyListeners();
+  }
 
-  Future<AuthResponse> signInWithGoogle() async {
+  Future<void> signInWithGoogle() async {
     final googleSignIn = GoogleSignIn(
       serverClientId: '', // TODO: add web client ID
     );
@@ -21,20 +33,30 @@ class AuthService {
 
     final googleAuth = await googleUser.authentication;
     final idToken = googleAuth.idToken;
-    final accessToken = googleAuth.accessToken;
-
     if (idToken == null) {
       throw Exception('No ID token from Google');
     }
 
-    return _supabase.auth.signInWithIdToken(
-      provider: OAuthProvider.google,
-      idToken: idToken,
-      accessToken: accessToken,
+    // Exchange Google ID token for backend session token
+    final response = await http.post(
+      Uri.parse('${Env.apiBaseUrl}/api/auth/google'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'id_token': idToken}),
     );
+
+    if (response.statusCode != 200) {
+      throw Exception('Auth failed: ${response.body}');
+    }
+
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    _token = data['token'] as String;
+    _user = data['user'] as Map<String, dynamic>?;
+    notifyListeners();
   }
 
   Future<void> signOut() async {
-    await _supabase.auth.signOut();
+    _token = null;
+    _user = null;
+    notifyListeners();
   }
 }

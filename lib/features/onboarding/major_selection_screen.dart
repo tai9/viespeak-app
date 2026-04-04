@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
 
-import '../../core/services/memory_service.dart';
+import '../../core/services/api_service.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/theme/app_theme.dart';
 
 class MajorSelectionScreen extends StatefulWidget {
@@ -13,16 +14,17 @@ class MajorSelectionScreen extends StatefulWidget {
 }
 
 class _MajorSelectionScreenState extends State<MajorSelectionScreen> {
-  final _memoryService = MemoryService();
   bool _loading = false;
 
   Future<void> _selectMajor(String major) async {
     setState(() => _loading = true);
     try {
-      final user = Supabase.instance.client.auth.currentUser!;
-      await _memoryService.upsertUserProfile(
-        userId: user.id,
-        name: user.userMetadata?['full_name'] ?? '',
+      final auth = context.read<AuthService>();
+      final api = context.read<ApiService>();
+      final user = auth.user;
+      await api.upsertUserProfile(
+        userId: user?['id'] ?? '',
+        name: user?['name'] ?? '',
         major: major,
       );
       if (mounted) context.go('/conversation?major=$major');

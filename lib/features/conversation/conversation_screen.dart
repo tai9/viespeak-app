@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:provider/provider.dart';
 
-import '../../core/services/memory_service.dart';
+import '../../core/services/auth_service.dart';
 import '../../core/services/ws_service.dart';
 import '../../core/theme/app_theme.dart';
 import 'transcript_widget.dart';
@@ -18,8 +18,7 @@ class ConversationScreen extends StatefulWidget {
 }
 
 class _ConversationScreenState extends State<ConversationScreen> {
-  final _wsService = WsService();
-  final _memoryService = MemoryService();
+  late final WsService _wsService = context.read<WsService>();
   final _scrollController = ScrollController();
   final _entries = <TranscriptEntry>[];
 
@@ -29,15 +28,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
   int _secondsRemaining = 600; // 10 minutes
 
   String get _personaName => widget.major == 'IT' ? 'Alex' : 'Sarah';
-  String get _userName {
-    final user = Supabase.instance.client.auth.currentUser;
-    return user?.userMetadata?['full_name']?.toString().split(' ').first ?? 'there';
-  }
+  String get _userName => context.read<AuthService>().userName;
 
   @override
   void dispose() {
     _sessionTimer?.cancel();
-    _wsService.dispose();
+    _wsService.disconnect();
     _scrollController.dispose();
     super.dispose();
   }
@@ -45,11 +41,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Future<void> _startConversation() async {
     setState(() => _isConnecting = true);
     try {
-      final session = Supabase.instance.client.auth.currentSession;
-      if (session == null) return;
+      final auth = context.read<AuthService>();
+      final token = auth.token;
+      if (token == null) return;
 
       await _wsService.connect(
-        token: session.accessToken,
+        token: token,
         major: widget.major,
       );
 
@@ -181,8 +178,6 @@ class _ConversationScreenState extends State<ConversationScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 64),
-
-            // Warm stone mic button — the signature CTA
             GestureDetector(
               onTap: _isConnecting ? null : _startConversation,
               child: Container(

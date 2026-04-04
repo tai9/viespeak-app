@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/services/auth_service.dart';
 import '../../core/theme/app_theme.dart';
@@ -12,13 +13,12 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _authService = AuthService();
   bool _loading = false;
 
   Future<void> _handleGoogleSignIn() async {
     setState(() => _loading = true);
     try {
-      await _authService.signInWithGoogle();
+      await context.read<AuthService>().signInWithGoogle();
       if (mounted) context.go('/select-major');
     } catch (e) {
       if (mounted) {
@@ -49,8 +49,6 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: AppTypography.body.copyWith(color: AppColors.darkGray),
                 ),
                 const SizedBox(height: 64),
-
-                // Primary black pill button
                 SizedBox(
                   width: double.infinity,
                   height: 52,
