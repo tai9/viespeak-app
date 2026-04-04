@@ -1,17 +1,36 @@
-# viespeak
+# VieSpeak
 
-A new Flutter project.
+AI voice companion app that helps Vietnamese university students practice English speaking through natural conversations with AI personas.
 
-## Getting Started
+## Tech Stack
 
-This project is a starting point for a Flutter application.
+- **Mobile:** Flutter (iOS + Android)
+- **Backend:** Golang (separate repo)
+- **Voice:** OpenAI Realtime API (Speech-to-Speech)
 
-A few resources to get you started if this is your first Flutter project:
+## Setup
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+1. Clone the repo
+2. Copy `.env.example` to `.env` and fill in values
+3. Run `flutter pub get`
+4. Run `flutter run`
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### Environment Variables
+
+```
+API_BASE_URL=          # Golang backend REST API
+SUPABASE_URL=          # Supabase project URL
+SUPABASE_ANON_KEY=     # Supabase anonymous key
+DEV_MODE=false         # true = mock services, no backend needed
+```
+
+## Architecture
+
+The app connects directly to OpenAI Realtime API via ephemeral tokens. The backend handles auth, quota, memory, and token generation — it does not proxy audio.
+
+```
+Flutter App
+  → GET /session/init        → Backend (returns ephemeral token)
+  → WebSocket (voice)        → OpenAI Realtime API (direct)
+  → POST /session/end        → Backend (stores memory, deducts quota)
+```
