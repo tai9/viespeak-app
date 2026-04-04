@@ -9,10 +9,7 @@ import 'core/providers/providers.dart';
 import 'core/services/api_service.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/base_auth_service.dart';
-import 'core/services/mock_api_service.dart';
-import 'core/services/mock_auth_service.dart';
 import 'core/services/mock_realtime_service.dart';
-import 'core/services/mock_session_service.dart';
 import 'core/services/realtime_service.dart';
 import 'core/services/session_service.dart';
 
@@ -22,16 +19,14 @@ Future<void> main() async {
 
   final isDev = Env.devMode;
 
-  if (!isDev) {
-    await Supabase.initialize(
-      url: Env.supabaseUrl,
-      anonKey: Env.supabaseAnonKey,
-    );
-  }
+  await Supabase.initialize(
+    url: Env.supabaseUrl,
+    anonKey: Env.supabaseAnonKey,
+  );
 
-  final BaseAuthService authService = isDev ? MockAuthService() : AuthService();
-  final apiService = isDev ? MockApiService(authService) : ApiService(authService);
-  final sessionService = isDev ? MockSessionService(authService) : SessionService(authService);
+  final BaseAuthService authService = AuthService();
+  final apiService = ApiService(authService);
+  final sessionService = SessionService(authService);
   final realtimeService = isDev ? MockRealtimeService() : RealtimeService();
 
   runApp(
