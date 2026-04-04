@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/providers/profile_providers.dart';
 import '../../core/providers/providers.dart';
@@ -12,7 +13,9 @@ import '../../core/services/session_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/error_utils.dart';
 import '../../shared/widgets/quota_bar_widget.dart';
+import 'audio_level_processor.dart';
 import 'transcript_widget.dart';
+import 'voice_orb_widget.dart';
 
 class ConversationScreen extends ConsumerStatefulWidget {
   final String major;
@@ -34,12 +37,20 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _isConnected = false;
   bool _isConnecting = false;
   bool _isSpeaking = false;
+  bool _isAISpeaking = false;
   bool _quotaExceeded = false;
   String _quotaResetAt = '';
   Timer? _sessionTimer;
+  Timer? _aiSpeakingTimer;
   int _secondsRemaining = 0;
   int _totalSeconds = 0;
   DateTime? _sessionStartTime;
+
+  // Audio level tracking for orb animation
+  final _micLevel = ValueNotifier<double>(0.0);
+  final _aiLevel = ValueNotifier<double>(0.0);
+  final _micLevelProcessor = AudioLevelProcessor(alpha: 0.4);
+  final _aiLevelProcessor = AudioLevelProcessor(alpha: 0.25);
 
   // Accumulate streaming AI transcript
   StringBuffer _currentAITranscript = StringBuffer();
@@ -60,10 +71,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   @override
   void dispose() {
     _sessionTimer?.cancel();
+    _aiSpeakingTimer?.cancel();
     _cancelSubscriptions();
     _realtimeService.disconnect();
     _audioService.dispose();
     _scrollController.dispose();
+    _micLevel.dispose();
+    _aiLevel.dispose();
     super.dispose();
   }
 
@@ -75,6 +89,36 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Future<void> _startConversation() async {
+    // Check mic permission before anything else
+    final micGranted = await _audioService.requestPermission();
+    if (!micGranted) {
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Microphone Access'),
+            content: const Text(
+              'VieSpeak needs microphone access to have a conversation. Please enable it in Settings.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  openAppSettings();
+                },
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _isConnecting = true);
     final apiService = ref.read(apiServiceProvider);
     try {
@@ -175,6 +219,16 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         }),
         _realtimeService.onAudioReceived.listen((audioBytes) {
           _audioService.playAudioChunk(audioBytes);
+          _aiLevel.value = _aiLevelProcessor.process(audioBytes);
+          if (!_isAISpeaking) setState(() => _isAISpeaking = true);
+          _aiSpeakingTimer?.cancel();
+          _aiSpeakingTimer = Timer(const Duration(milliseconds: 300), () {
+            if (mounted) {
+              setState(() => _isAISpeaking = false);
+              _aiLevel.value = 0.0;
+              _aiLevelProcessor.reset();
+            }
+          });
         }),
         _realtimeService.onSpeechStarted.listen((_) {
           setState(() => _isSpeaking = true);
@@ -241,6 +295,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       await _audioService.startRecording();
       _audioService.micStream?.listen((pcm16Chunk) {
         _realtimeService.sendAudio(pcm16Chunk);
+        _micLevel.value = _micLevelProcessor.process(pcm16Chunk);
       });
     } catch (e) {
       if (mounted) {
@@ -438,18 +493,30 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Widget _buildConversationView() {
+    final orbState = _isAISpeaking
+        ? OrbState.aiSpeaking
+        : _isSpeaking
+            ? OrbState.userSpeaking
+            : OrbState.idle;
+
     return Column(
       children: [
         Expanded(
+          flex: 3,
+          child: Center(
+            child: VoiceOrbWidget(
+              state: orbState,
+              micLevel: _micLevel,
+              aiLevel: _aiLevel,
+            ),
+          ),
+        ),
+        Expanded(
+          flex: 2,
           child: TranscriptWidget(
             entries: _entries,
             scrollController: _scrollController,
           ),
-        ),
-        // Speaking indicator
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 16),
-          child: _SpeakingIndicator(isSpeaking: _isSpeaking),
         ),
       ],
     );
@@ -510,37 +577,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _SpeakingIndicator extends StatelessWidget {
-  final bool isSpeaking;
-
-  const _SpeakingIndicator({required this.isSpeaking});
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      opacity: isSpeaking ? 1.0 : 0.4,
-      duration: const Duration(milliseconds: 200),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.mic_rounded,
-            size: 18,
-            color: isSpeaking ? AppColors.black : AppColors.warmGray,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            isSpeaking ? 'Listening...' : 'Speak anytime',
-            style: AppTypography.caption.copyWith(
-              color: isSpeaking ? AppColors.black : AppColors.warmGray,
-            ),
-          ),
-        ],
       ),
     );
   }

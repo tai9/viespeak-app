@@ -29,6 +29,10 @@ class AppColors {
 
   // Warm stone at 80% opacity (signature)
   static const warmStoneSurface = Color(0xCCF5F2EF);
+
+  // Orb
+  static const warmStoneDark = Color(0xFFEDE8E3);
+  static const orbGlow = Color(0xFF4E3217);
 }
 
 // --- Shadows ---------------------------------------------------------------
