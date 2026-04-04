@@ -4,32 +4,36 @@ class MockApiService extends ApiService {
   MockApiService(super.authService);
 
   @override
-  Future<Map<String, dynamic>?> getLatestMemory(String userId) async {
-    await Future.delayed(const Duration(milliseconds: 300));
-    return {
-      'summary': 'Talked about preparing for a software engineering internship at FPT.',
-      'facts': {'goal': 'internship at FPT', 'project': 'graduation thesis on microservices'},
-      'pending_followup': 'How did the mock interview go?',
-    };
-  }
-
-  @override
-  Future<Map<String, dynamic>?> getUserProfile(String userId) async {
+  Future<Map<String, dynamic>?> getProfile() async {
     await Future.delayed(const Duration(milliseconds: 200));
     return {
-      'id': userId,
+      'id': 'mock-profile-id',
       'name': 'Minh Nguyen',
       'major': 'IT',
       'level': 'B1',
+      'created_at': '2026-04-04T00:00:00Z',
     };
   }
 
   @override
-  Future<void> upsertUserProfile({
-    required String userId,
+  Future<void> createProfile({
     required String name,
     required String major,
   }) async {
     await Future.delayed(const Duration(milliseconds: 300));
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getMemories() async {
+    await Future.delayed(const Duration(milliseconds: 300));
+    return [
+      {
+        'id': 'mock-memory-id',
+        'summary': 'Talked about preparing for a software engineering internship at FPT.',
+        'facts': {'goal': 'internship at FPT', 'project': 'graduation thesis on microservices'},
+        'pending_followup': 'How did the mock interview go?',
+        'created_at': '2026-04-04T00:00:00Z',
+      },
+    ];
   }
 }

@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/services/auth_service.dart';
+import '../../core/services/audio_service.dart';
+import '../../core/services/base_auth_service.dart';
 import '../../core/services/ws_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/utils/error_utils.dart';
 import 'transcript_widget.dart';
 
 class ConversationScreen extends StatefulWidget {
@@ -18,49 +21,136 @@ class ConversationScreen extends StatefulWidget {
 }
 
 class _ConversationScreenState extends State<ConversationScreen> {
-  late final WsService _wsService = context.read<WsService>();
+  WsService? _wsService;
+  final _audioService = AudioService();
   final _scrollController = ScrollController();
   final _entries = <TranscriptEntry>[];
+  final _subscriptions = <StreamSubscription>[];
 
   bool _isConnected = false;
   bool _isConnecting = false;
+  bool _isSpeaking = false; // user is speaking
   Timer? _sessionTimer;
   int _secondsRemaining = 600; // 10 minutes
 
+  // Accumulate streaming AI transcript
+  StringBuffer _currentAITranscript = StringBuffer();
+
   String get _personaName => widget.major == 'IT' ? 'Alex' : 'Sarah';
-  String get _userName => context.read<AuthService>().userName;
+  String get _userName => context.read<BaseAuthService>().userName;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _wsService ??= context.read<WsService>();
+  }
 
   @override
   void dispose() {
     _sessionTimer?.cancel();
-    _wsService.disconnect();
+    _cancelSubscriptions();
+    _wsService?.disconnect();
+    _audioService.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _cancelSubscriptions() {
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
+    _subscriptions.clear();
   }
 
   Future<void> _startConversation() async {
     setState(() => _isConnecting = true);
     try {
-      final auth = context.read<AuthService>();
-      final token = auth.token;
-      if (token == null) return;
+      final token = context.read<BaseAuthService>().token;
+      if (token == null) {
+        setState(() => _isConnecting = false);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Not authenticated. Please sign in again.')),
+          );
+        }
+        return;
+      }
 
-      await _wsService.connect(
-        token: token,
-        major: widget.major,
-      );
+      // Connect WebSocket
+      await _wsService!.connect(token: token);
 
-      _wsService.transcriptStream.listen((data) {
-        final speaker = data['speaker'] as String? ?? 'assistant';
-        final text = data['text'] as String? ?? '';
-        if (text.isNotEmpty) {
+      // Start mic immediately — don't wait for session.created
+      await _startMic();
+
+      // Listen to WS events
+      _subscriptions.addAll([
+        _wsService!.onAITranscriptDelta.listen((delta) {
+          _currentAITranscript.write(delta);
           setState(() {
-            _entries.add(TranscriptEntry(speaker: speaker, text: text));
+            // Update or add the current AI message
+            if (_entries.isNotEmpty && _entries.last.speaker == 'assistant' && !_entries.last.isFinalized) {
+              _entries.last = TranscriptEntry(
+                speaker: 'assistant',
+                text: _currentAITranscript.toString(),
+              );
+            } else {
+              _entries.add(TranscriptEntry(
+                speaker: 'assistant',
+                text: _currentAITranscript.toString(),
+              ));
+            }
           });
           _scrollToBottom();
-        }
-      });
+        }),
+        _wsService!.onAITranscriptDone.listen((transcript) {
+          setState(() {
+            // Finalize the current AI message
+            if (_entries.isNotEmpty && _entries.last.speaker == 'assistant') {
+              _entries.last = TranscriptEntry(
+                speaker: 'assistant',
+                text: transcript,
+                isFinalized: true,
+              );
+            }
+          });
+          _currentAITranscript = StringBuffer();
+          _scrollToBottom();
+        }),
+        _wsService!.onUserTranscript.listen((transcript) {
+          if (transcript.trim().isEmpty) return;
+          setState(() {
+            _entries.add(TranscriptEntry(
+              speaker: 'user',
+              text: transcript,
+              isFinalized: true,
+            ));
+          });
+          _scrollToBottom();
+        }),
+        _wsService!.onAudioReceived.listen((audioBytes) {
+          _audioService.playAudioChunk(audioBytes);
+        }),
+        _wsService!.onSpeechStarted.listen((_) {
+          setState(() => _isSpeaking = true);
+          // Interrupt AI audio when user starts speaking
+          _audioService.stopPlayback();
+        }),
+        _wsService!.onSpeechStopped.listen((_) {
+          setState(() => _isSpeaking = false);
+        }),
+        _wsService!.onError.listen((error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text(error)),
+            );
+          }
+        }),
+        _wsService!.onDone.listen((_) {
+          if (mounted) _endConversation();
+        }),
+      ]);
 
+      // Start session timer
       _sessionTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
         setState(() => _secondsRemaining--);
         if (_secondsRemaining <= 0) {
@@ -76,7 +166,22 @@ class _ConversationScreenState extends State<ConversationScreen> {
       setState(() => _isConnecting = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Connection failed: $e')),
+          SnackBar(content: Text(friendlyError(e))),
+        );
+      }
+    }
+  }
+
+  Future<void> _startMic() async {
+    try {
+      await _audioService.startRecording();
+      _audioService.micStream?.listen((pcm16Chunk) {
+        _wsService?.sendAudio(pcm16Chunk);
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyError(e))),
         );
       }
     }
@@ -84,7 +189,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   void _endConversation() {
     _sessionTimer?.cancel();
-    _wsService.disconnect();
+    _cancelSubscriptions();
+    _wsService?.disconnect();
+    _audioService.stopRecording();
+    _audioService.stopPlayback();
     setState(() => _isConnected = false);
   }
 
@@ -110,14 +218,24 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.white,
-      appBar: _isConnected ? _buildAppBar() : null,
+      appBar: _isConnected ? _buildAppBar() : _buildIdleAppBar(),
       body: SafeArea(
-        child: _isConnected
-            ? TranscriptWidget(
-                entries: _entries,
-                scrollController: _scrollController,
-              )
-            : _buildStartView(),
+        child: _isConnected ? _buildConversationView() : _buildStartView(),
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildIdleAppBar() {
+    return AppBar(
+      backgroundColor: AppColors.white,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      leading: Padding(
+        padding: const EdgeInsets.only(left: 8),
+        child: IconButton(
+          icon: const Icon(Icons.person_outline_rounded, color: AppColors.black),
+          onPressed: () => context.push('/profile'),
+        ),
       ),
     );
   }
@@ -160,6 +278,24 @@ class _ConversationScreenState extends State<ConversationScreen> {
               ),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConversationView() {
+    return Column(
+      children: [
+        Expanded(
+          child: TranscriptWidget(
+            entries: _entries,
+            scrollController: _scrollController,
+          ),
+        ),
+        // Speaking indicator
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: _SpeakingIndicator(isSpeaking: _isSpeaking),
         ),
       ],
     );
@@ -220,6 +356,37 @@ class _ConversationScreenState extends State<ConversationScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _SpeakingIndicator extends StatelessWidget {
+  final bool isSpeaking;
+
+  const _SpeakingIndicator({required this.isSpeaking});
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: isSpeaking ? 1.0 : 0.4,
+      duration: const Duration(milliseconds: 200),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.mic_rounded,
+            size: 18,
+            color: isSpeaking ? AppColors.black : AppColors.warmGray,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            isSpeaking ? 'Listening...' : 'Speak anytime',
+            style: AppTypography.caption.copyWith(
+              color: isSpeaking ? AppColors.black : AppColors.warmGray,
+            ),
+          ),
+        ],
       ),
     );
   }

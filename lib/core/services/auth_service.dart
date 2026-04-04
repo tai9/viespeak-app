@@ -1,62 +1,67 @@
-import 'dart:convert';
+import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../config/env.dart';
+import 'base_auth_service.dart';
 
-class AuthService extends ChangeNotifier {
-  String? _token;
-  Map<String, dynamic>? _user;
+class AuthService extends BaseAuthService {
+  final SupabaseClient _supabase = Supabase.instance.client;
+  StreamSubscription<AuthState>? _authSubscription;
 
-  String? get token => _token;
-  Map<String, dynamic>? get user => _user;
-  bool get isSignedIn => _token != null;
-  String get userName => _user?['name']?.toString().split(' ').first ?? 'there';
-
-  @protected
-  void setSession({required String token, required Map<String, dynamic> user}) {
-    _token = token;
-    _user = user;
-    notifyListeners();
+  AuthService() {
+    _authSubscription = _supabase.auth.onAuthStateChange.listen((data) {
+      notifyListeners();
+    });
   }
 
+  Session? get session => _supabase.auth.currentSession;
+  User? get user => _supabase.auth.currentUser;
+
+  @override
+  String? get token => session?.accessToken;
+
+  @override
+  bool get isSignedIn => session != null;
+
+  @override
+  String get userName {
+    final meta = user?.userMetadata;
+    final fullName = meta?['full_name'] as String? ??
+        meta?['name'] as String? ??
+        user?.email?.split('@').first ??
+        'there';
+    return fullName.split(' ').first;
+  }
+
+  @override
   Future<void> signInWithGoogle() async {
-    final googleSignIn = GoogleSignIn(
-      serverClientId: '', // TODO: add web client ID
-    );
-    final googleUser = await googleSignIn.signIn();
-    if (googleUser == null) {
-      throw Exception('Google sign-in cancelled');
-    }
-
-    final googleAuth = await googleUser.authentication;
-    final idToken = googleAuth.idToken;
-    if (idToken == null) {
-      throw Exception('No ID token from Google');
-    }
-
-    // Exchange Google ID token for backend session token
-    final response = await http.post(
-      Uri.parse('${Env.apiBaseUrl}/api/auth/google'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'id_token': idToken}),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception('Auth failed: ${response.body}');
-    }
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    _token = data['token'] as String;
-    _user = data['user'] as Map<String, dynamic>?;
-    notifyListeners();
+    await _supabase.auth.signInWithOAuth(OAuthProvider.google);
   }
 
+  @override
+  Future<void> signInWithPassword({
+    required String email,
+    required String password,
+  }) async {
+    await _supabase.auth.signInWithPassword(email: email, password: password);
+  }
+
+  @override
+  Future<void> signUp({
+    required String email,
+    required String password,
+  }) async {
+    await _supabase.auth.signUp(email: email, password: password);
+  }
+
+  @override
   Future<void> signOut() async {
-    _token = null;
-    _user = null;
-    notifyListeners();
+    await _supabase.auth.signOut();
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
   }
 }

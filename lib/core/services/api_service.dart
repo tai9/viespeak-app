@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
-import 'auth_service.dart';
+import 'base_auth_service.dart';
 
 class ApiService {
-  final AuthService _authService;
+  final BaseAuthService _authService;
 
   ApiService(this._authService);
 
@@ -18,40 +18,46 @@ class ApiService {
           'Authorization': 'Bearer ${_authService.token}',
       };
 
-  Future<Map<String, dynamic>?> getLatestMemory(String userId) async {
+  /// GET /api/profile — returns list of profiles (empty if none exists)
+  Future<Map<String, dynamic>?> getProfile() async {
     final response = await http.get(
-      Uri.parse('$_baseUrl/api/memory/$userId'),
+      Uri.parse('$_baseUrl/api/profile'),
       headers: _headers,
     );
     if (response.statusCode == 200) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
+      final list = jsonDecode(response.body) as List<dynamic>;
+      if (list.isNotEmpty) {
+        return list.first as Map<String, dynamic>;
+      }
     }
     return null;
   }
 
-  Future<Map<String, dynamic>?> getUserProfile(String userId) async {
-    final response = await http.get(
-      Uri.parse('$_baseUrl/api/users/$userId'),
-      headers: _headers,
-    );
-    if (response.statusCode == 200) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
-    }
-    return null;
-  }
-
-  Future<void> upsertUserProfile({
-    required String userId,
+  /// POST /api/profile — create or update profile with name and major
+  Future<void> createProfile({
     required String name,
     required String major,
   }) async {
-    await http.put(
-      Uri.parse('$_baseUrl/api/users/$userId'),
+    await http.post(
+      Uri.parse('$_baseUrl/api/profile'),
       headers: _headers,
       body: jsonEncode({
         'name': name,
         'major': major,
       }),
     );
+  }
+
+  /// GET /api/memories — returns list of memory entries
+  Future<List<Map<String, dynamic>>> getMemories() async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/api/memories'),
+      headers: _headers,
+    );
+    if (response.statusCode == 200) {
+      final list = jsonDecode(response.body) as List<dynamic>;
+      return list.cast<Map<String, dynamic>>();
+    }
+    return [];
   }
 }

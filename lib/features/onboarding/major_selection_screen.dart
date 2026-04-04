@@ -3,8 +3,9 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/services/api_service.dart';
-import '../../core/services/auth_service.dart';
+import '../../core/services/base_auth_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/utils/error_utils.dart';
 
 class MajorSelectionScreen extends StatefulWidget {
   const MajorSelectionScreen({super.key});
@@ -19,19 +20,17 @@ class _MajorSelectionScreenState extends State<MajorSelectionScreen> {
   Future<void> _selectMajor(String major) async {
     setState(() => _loading = true);
     try {
-      final auth = context.read<AuthService>();
+      final auth = context.read<BaseAuthService>();
       final api = context.read<ApiService>();
-      final user = auth.user;
-      await api.upsertUserProfile(
-        userId: user?['id'] ?? '',
-        name: user?['name'] ?? '',
+      await api.createProfile(
+        name: auth.userName,
         major: major,
       );
       if (mounted) context.go('/conversation?major=$major');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save: $e')),
+          SnackBar(content: Text(friendlyError(e))),
         );
       }
     } finally {

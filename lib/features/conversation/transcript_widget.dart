@@ -5,11 +5,13 @@ import '../../core/theme/app_theme.dart';
 class TranscriptEntry {
   final String speaker;
   final String text;
+  final bool isFinalized;
   final DateTime timestamp;
 
   TranscriptEntry({
     required this.speaker,
     required this.text,
+    this.isFinalized = false,
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 }
@@ -50,7 +52,7 @@ class TranscriptWidget extends StatelessWidget {
             child: Text(
               entry.text,
               style: AppTypography.bodyStandard.copyWith(
-                color: AppColors.black,
+                color: entry.isFinalized ? AppColors.black : AppColors.darkGray,
               ),
             ),
           ),
