@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'base_auth_service.dart';
@@ -7,6 +8,9 @@ import 'base_auth_service.dart';
 class AuthService extends BaseAuthService {
   final SupabaseClient _supabase = Supabase.instance.client;
   StreamSubscription<AuthState>? _authSubscription;
+
+  static const _redirectUrl = 'com.viespeak.viespeak://login-callback/';
+  static const _callbackScheme = 'com.viespeak.viespeak';
 
   AuthService() {
     _authSubscription = _supabase.auth.onAuthStateChange.listen((data) {
@@ -35,7 +39,17 @@ class AuthService extends BaseAuthService {
 
   @override
   Future<void> signInWithGoogle() async {
-    await _supabase.auth.signInWithOAuth(OAuthProvider.google);
+    final res = await _supabase.auth.getOAuthSignInUrl(
+      provider: OAuthProvider.google,
+      redirectTo: _redirectUrl,
+    );
+
+    final callbackUrl = await FlutterWebAuth2.authenticate(
+      url: res.url,
+      callbackUrlScheme: _callbackScheme,
+    );
+
+    await _supabase.auth.getSessionFromUrl(Uri.parse(callbackUrl));
   }
 
   @override

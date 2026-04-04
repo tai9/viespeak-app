@@ -42,6 +42,7 @@ dependencies:
   record: ^6.0.0
   flutter_sound: ^9.22.4
   permission_handler: ^11.4.0
+  flutter_web_auth_2: ^4.0.0
 
 dev_dependencies:
   flutter_test:
