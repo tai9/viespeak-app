@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../core/providers/providers.dart';
 import '../../core/theme/app_theme.dart';
@@ -278,9 +279,20 @@ class _GoogleSignInButton extends StatelessWidget {
           onTap: loading ? null : onPressed,
           borderRadius: BorderRadius.circular(AppRadius.pill),
           child: Center(
-            child: Text(
-              'Continue with Google',
-              style: AppTypography.button.copyWith(color: AppColors.black),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SvgPicture.asset(
+                  'assets/images/google_icon.svg',
+                  width: 20,
+                  height: 20,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Continue with Google',
+                  style: AppTypography.button.copyWith(color: AppColors.black),
+                ),
+              ],
             ),
           ),
         ),
