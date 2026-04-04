@@ -9,11 +9,11 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../core/providers/profile_providers.dart';
 import '../../core/providers/providers.dart';
 import '../../core/services/audio_service.dart';
+import '../../core/services/conversation_controller.dart';
 import '../../core/services/realtime_service.dart';
 import '../../core/services/session_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/error_utils.dart';
-import 'audio_level_processor.dart';
 import 'transcript_widget.dart';
 import 'voice_orb_widget.dart';
 
@@ -30,26 +30,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   late final RealtimeService _realtimeService;
   late final SessionService _sessionService;
   final _audioService = AudioService();
+  late final ConversationController _controller;
   final _entries = <TranscriptEntry>[];
   final _floatingTranscripts = <_FloatingTranscript>[];
   final _subscriptions = <StreamSubscription>[];
 
   bool _isConnected = false;
   bool _isConnecting = false;
-  bool _isSpeaking = false;
-  bool _isAISpeaking = false;
   bool _quotaExceeded = false;
   String _quotaResetAt = '';
   Timer? _sessionTimer;
-  Timer? _aiSpeakingTimer;
   int _secondsRemaining = 0;
   DateTime? _sessionStartTime;
-
-  // Audio level tracking for orb animation
-  final _micLevel = ValueNotifier<double>(0.0);
-  final _aiLevel = ValueNotifier<double>(0.0);
-  final _micLevelProcessor = AudioLevelProcessor(alpha: 0.4);
-  final _aiLevelProcessor = AudioLevelProcessor(alpha: 0.25);
 
   // Accumulate streaming AI transcript
   StringBuffer _currentAITranscript = StringBuffer();
@@ -65,18 +57,35 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     super.initState();
     _realtimeService = ref.read(realtimeServiceProvider);
     _sessionService = ref.read(sessionServiceProvider);
+    _controller = ConversationController(
+      realtime: _realtimeService,
+      audio: _audioService,
+    );
+    _controller.state.addListener(_onStateChanged);
   }
 
   @override
   void dispose() {
     _sessionTimer?.cancel();
-    _aiSpeakingTimer?.cancel();
     _cancelSubscriptions();
-    _realtimeService.disconnect();
+    _controller.state.removeListener(_onStateChanged);
+    _controller.stop();
+    _controller.dispose();
     _audioService.dispose();
-    _micLevel.dispose();
-    _aiLevel.dispose();
     super.dispose();
+  }
+
+  ConversationState _prevState = ConversationState.idle;
+  void _onStateChanged() {
+    final next = _controller.state.value;
+    if (next == _prevState) return;
+    // Haptic feedback on voice turn changes.
+    if (next == ConversationState.userSpeaking ||
+        next == ConversationState.aiSpeaking) {
+      HapticFeedback.selectionClick();
+    }
+    _prevState = next;
+    if (mounted) setState(() {});
   }
 
   void _cancelSubscriptions() {
@@ -159,19 +168,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         // Memory fetch is non-critical, continue without it
       }
 
-      // 3. Connect to OpenAI Realtime API
-      await _realtimeService.connect(
+      // 3. Hand off connection + mic + playback + state machine to the
+      //    controller. It owns the idle/userSpeaking/aiSpeaking FSM and
+      //    hardware-pauses the mic whenever the AI is speaking.
+      await _controller.start(
         token: sessionInit.token,
         model: sessionInit.model,
       );
 
-      // 4. Send session config (audio format + VAD)
-      _realtimeService.sendSessionUpdate();
-
-      // 5. Start mic
-      await _startMic();
-
-      // 6. Listen to realtime events
+      // 4. Listen to realtime transcript events (UI-only concerns)
       _subscriptions.addAll([
         _realtimeService.onAITranscriptDelta.listen((delta) {
           _currentAITranscript.write(delta);
@@ -223,47 +228,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           _addFloatingTranscript(transcript, true);
           HapticFeedback.lightImpact();
         }),
-        _realtimeService.onAudioReceived.listen((audioBytes) {
-          _audioService.playAudioChunk(audioBytes);
-          _aiLevel.value = _aiLevelProcessor.process(audioBytes);
-          if (!_isAISpeaking && mounted) {
-            setState(() => _isAISpeaking = true);
-          }
-          _aiSpeakingTimer?.cancel();
-          _aiSpeakingTimer = Timer(const Duration(milliseconds: 600), () {
-            if (mounted) {
-              setState(() => _isAISpeaking = false);
-              _aiLevelProcessor.reset();
-            }
-          });
-        }),
-        _realtimeService.onSpeechStarted.listen((_) {
-          HapticFeedback.selectionClick();
-          setState(() => _isSpeaking = true);
-          _audioService.stopPlayback();
-          _realtimeService.cancelResponse();
-          // Finalize partial AI transcript on interruption
-          if (_entries.isNotEmpty &&
-              _entries.last.speaker == 'assistant' &&
-              !_entries.last.isFinalized) {
-            final partialText = _currentAITranscript.toString();
-            if (partialText.isNotEmpty) {
-              setState(() {
-                _entries.last = TranscriptEntry(
-                  speaker: 'assistant',
-                  text: partialText,
-                  isFinalized: true,
-                );
-              });
-              _transcriptLog.add({'role': 'assistant', 'text': partialText});
-            }
-            _currentAITranscript = StringBuffer();
-          }
-        }),
-        _realtimeService.onSpeechStopped.listen((_) {
-          HapticFeedback.selectionClick();
-          setState(() => _isSpeaking = false);
-        }),
         _realtimeService.onError.listen((error) {
           if (mounted) {
             ScaffoldMessenger.of(
@@ -299,29 +263,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     }
   }
 
-  Future<void> _startMic() async {
-    try {
-      await _audioService.startRecording();
-      _audioService.micStream?.listen((pcm16Chunk) {
-        _realtimeService.sendAudio(pcm16Chunk);
-        _micLevel.value = _micLevelProcessor.process(pcm16Chunk);
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
-      }
-    }
-  }
-
   Future<void> _endConversation() async {
     HapticFeedback.lightImpact();
     _sessionTimer?.cancel();
     _cancelSubscriptions();
-    _realtimeService.disconnect();
-    _audioService.stopRecording();
-    _audioService.stopPlayback();
+    await _controller.stop();
     setState(() => _isConnected = false);
 
     // Send transcript + duration to backend
@@ -586,14 +532,23 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Widget _buildOrb() {
-    final orbState = _isAISpeaking
-        ? OrbState.aiSpeaking
-        : _isSpeaking
-            ? OrbState.userSpeaking
-            : OrbState.idle;
+    final convState = _controller.state.value;
+    final orbState = switch (convState) {
+      ConversationState.aiSpeaking => OrbState.aiSpeaking,
+      ConversationState.userSpeaking => OrbState.userSpeaking,
+      ConversationState.idle => OrbState.idle,
+    };
 
     return GestureDetector(
-      onTap: (!_isConnected && !_isConnecting) ? _startConversation : null,
+      onTap: () {
+        if (!_isConnected && !_isConnecting) {
+          _startConversation();
+        } else if (convState == ConversationState.aiSpeaking) {
+          // Tap-to-interrupt: stop AI and hand the turn back to the user.
+          HapticFeedback.mediumImpact();
+          _controller.interrupt();
+        }
+      },
       child: SizedBox(
         width: 260,
         height: 260,
@@ -602,8 +557,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           children: [
             VoiceOrbWidget(
               state: orbState,
-              micLevel: _micLevel,
-              aiLevel: _aiLevel,
+              micLevel: _controller.micLevel,
+              aiLevel: _controller.aiLevel,
             ),
             // "Start talking" overlay — only when idle
             if (!_isConnected)

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import 'orb_painter.dart';
@@ -6,8 +7,8 @@ enum OrbState { idle, userSpeaking, aiSpeaking }
 
 class VoiceOrbWidget extends StatefulWidget {
   final OrbState state;
-  final ValueNotifier<double> micLevel;
-  final ValueNotifier<double> aiLevel;
+  final ValueListenable<double> micLevel;
+  final ValueListenable<double> aiLevel;
 
   const VoiceOrbWidget({
     super.key,
