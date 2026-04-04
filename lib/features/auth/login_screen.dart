@@ -75,6 +75,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                Image.asset(
+                  'assets/icon/app_icon.png',
+                  width: 96,
+                  height: 96,
+                ),
+                const SizedBox(height: 16),
                 Text('VieSpeak', style: AppTypography.displayHero),
                 const SizedBox(height: 12),
                 Text(
