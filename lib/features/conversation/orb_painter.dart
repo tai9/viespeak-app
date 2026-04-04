@@ -22,10 +22,7 @@ class OrbPainter extends CustomPainter {
 
   static const _pointCount = 64;
 
-  // Warm palette colors — opaque so the orb is clearly visible on white
-  static const _warmStone = Color(0xFFEDE8E3);
-  static const _warmStoneDark = Color(0xFFE2DCD6);
-  static const _warmStoneDeep = Color(0xFFD8D0C8);
+  static const _fillColor = Color(0xFFEDE8E3);
   static const _glowColor = Color(0xFF4E3217);
 
   @override
@@ -49,15 +46,15 @@ class OrbPainter extends CustomPainter {
 
   void _drawGlow(Canvas canvas, Offset center, double baseRadius) {
     final glowIntensity = switch (state) {
-      OrbState.idle => 0.06 + glowPhase * 0.04,
-      OrbState.userSpeaking => 0.10 + audioLevel * 0.12,
-      OrbState.aiSpeaking => 0.14 + audioLevel * 0.16,
+      OrbState.idle => 0.04 + glowPhase * 0.03,
+      OrbState.userSpeaking => 0.06 + audioLevel * 0.10,
+      OrbState.aiSpeaking => 0.08 + audioLevel * 0.14,
     };
 
     final glowRadius = switch (state) {
-      OrbState.idle => baseRadius * 1.2,
-      OrbState.userSpeaking => baseRadius * (1.25 + audioLevel * 0.15),
-      OrbState.aiSpeaking => baseRadius * (1.3 + audioLevel * 0.2),
+      OrbState.idle => baseRadius * (1.1 + glowPhase * 0.08),
+      OrbState.userSpeaking => baseRadius * (1.15 + audioLevel * 0.15),
+      OrbState.aiSpeaking => baseRadius * (1.2 + audioLevel * 0.2),
     };
 
     // Outer glow
@@ -76,30 +73,38 @@ class OrbPainter extends CustomPainter {
   void _drawBlob(Canvas canvas, Offset center, double baseRadius) {
     final path = _buildBlobPath(center, baseRadius);
 
-    // Fill color/gradient based on state
-    final paint = Paint()..style = PaintingStyle.fill;
-
-    switch (state) {
-      case OrbState.idle:
-        paint.color = _warmStone;
-      case OrbState.userSpeaking:
-        paint.color = _warmStoneDark;
-      case OrbState.aiSpeaking:
-        paint.shader = ui.Gradient.radial(
-          center,
-          baseRadius,
-          [_warmStoneDark, _warmStoneDeep],
-          [0.3, 1.0],
-        );
-    }
+    final paint = Paint()
+      ..style = PaintingStyle.fill
+      ..color = _fillColor;
 
     canvas.drawPath(path, paint);
 
-    // Subtle border
+    // Outer soft glow border
+    final idlePulse = glowPhase * 0.08;
+    final outerWidth = 4.0 + glowPhase * 4.0 + audioLevel * 8.0;
+    final outerBlur = 4.0 + glowPhase * 4.0 + audioLevel * 6.0;
+    final outerPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = outerWidth
+      ..color = _glowColor.withValues(alpha: 0.03 + idlePulse * 0.4 + audioLevel * 0.06)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, outerBlur);
+    canvas.drawPath(path, outerPaint);
+
+    // Mid shadow border
+    final midWidth = 2.0 + glowPhase * 3.0 + audioLevel * 6.0;
+    final midBlur = 2.0 + glowPhase * 3.0 + audioLevel * 5.0;
+    final midPaint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = midWidth
+      ..color = _glowColor.withValues(alpha: 0.05 + idlePulse + audioLevel * 0.10)
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, midBlur);
+    canvas.drawPath(path, midPaint);
+
+    // Crisp inner border
     final borderPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0
-      ..color = const Color(0x1A000000);
+      ..strokeWidth = 0.5 + glowPhase * 0.5 + audioLevel * 1.5
+      ..color = _glowColor.withValues(alpha: 0.08 + idlePulse + audioLevel * 0.15);
     canvas.drawPath(path, borderPaint);
   }
 
@@ -107,11 +112,11 @@ class OrbPainter extends CustomPainter {
     final points = <Offset>[];
     final rotPhase = rotationPhase * 2 * math.pi;
 
-    // Perturbation amount scales with audio level and state
+    // Perturbation amount scales with audio level
     final maxPerturbation = switch (state) {
       OrbState.idle => baseRadius * 0.015,
-      OrbState.userSpeaking => baseRadius * (0.02 + audioLevel * 0.06),
-      OrbState.aiSpeaking => baseRadius * (0.02 + audioLevel * 0.08),
+      OrbState.userSpeaking => baseRadius * (0.03 + audioLevel * 0.12),
+      OrbState.aiSpeaking => baseRadius * (0.03 + audioLevel * 0.15),
     };
 
     for (var i = 0; i < _pointCount; i++) {

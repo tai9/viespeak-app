@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -18,6 +19,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _signingOut = false;
 
   Future<void> _handleSignOut() async {
+    HapticFeedback.lightImpact();
     setState(() => _signingOut = true);
     try {
       await ref.read(authServiceProvider).signOut();

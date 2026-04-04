@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -12,7 +13,6 @@ import '../../core/services/realtime_service.dart';
 import '../../core/services/session_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/error_utils.dart';
-import '../../shared/widgets/quota_bar_widget.dart';
 import 'audio_level_processor.dart';
 import 'transcript_widget.dart';
 import 'voice_orb_widget.dart';
@@ -30,8 +30,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   late final RealtimeService _realtimeService;
   late final SessionService _sessionService;
   final _audioService = AudioService();
-  final _scrollController = ScrollController();
   final _entries = <TranscriptEntry>[];
+  final _floatingTranscripts = <_FloatingTranscript>[];
   final _subscriptions = <StreamSubscription>[];
 
   bool _isConnected = false;
@@ -43,7 +43,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   Timer? _sessionTimer;
   Timer? _aiSpeakingTimer;
   int _secondsRemaining = 0;
-  int _totalSeconds = 0;
   DateTime? _sessionStartTime;
 
   // Audio level tracking for orb animation
@@ -75,7 +74,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _cancelSubscriptions();
     _realtimeService.disconnect();
     _audioService.dispose();
-    _scrollController.dispose();
     _micLevel.dispose();
     _aiLevel.dispose();
     super.dispose();
@@ -89,6 +87,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Future<void> _startConversation() async {
+    HapticFeedback.mediumImpact();
+
     // Check mic permission before anything else
     final micGranted = await _audioService.requestPermission();
     if (!micGranted) {
@@ -135,7 +135,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         return;
       }
 
-      _totalSeconds = sessionInit.remainingSeconds;
       _secondsRemaining = sessionInit.remainingSeconds;
 
       // 2. Fetch memories for context hint
@@ -146,11 +145,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           final summary = memories.first['summary'] as String?;
           if (summary != null && summary.isNotEmpty) {
             setState(() {
-              _entries.add(TranscriptEntry(
-                speaker: 'system',
-                text: 'Last time: $summary',
-                isFinalized: true,
-              ));
+              _entries.add(
+                TranscriptEntry(
+                  speaker: 'system',
+                  text: 'Last time: $summary',
+                  isFinalized: true,
+                ),
+              );
             });
           }
         }
@@ -183,13 +184,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 text: _currentAITranscript.toString(),
               );
             } else {
-              _entries.add(TranscriptEntry(
-                speaker: 'assistant',
-                text: _currentAITranscript.toString(),
-              ));
+              _entries.add(
+                TranscriptEntry(
+                  speaker: 'assistant',
+                  text: _currentAITranscript.toString(),
+                ),
+              );
             }
           });
-          _scrollToBottom();
         }),
         _realtimeService.onAITranscriptDone.listen((transcript) {
           setState(() {
@@ -203,34 +205,40 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           });
           _currentAITranscript = StringBuffer();
           _transcriptLog.add({'role': 'assistant', 'text': transcript});
-          _scrollToBottom();
+          _addFloatingTranscript(transcript, false);
+          HapticFeedback.lightImpact();
         }),
         _realtimeService.onUserTranscript.listen((transcript) {
           if (transcript.trim().isEmpty) return;
           setState(() {
-            _entries.add(TranscriptEntry(
-              speaker: 'user',
-              text: transcript,
-              isFinalized: true,
-            ));
+            _entries.add(
+              TranscriptEntry(
+                speaker: 'user',
+                text: transcript,
+                isFinalized: true,
+              ),
+            );
           });
           _transcriptLog.add({'role': 'user', 'text': transcript});
-          _scrollToBottom();
+          _addFloatingTranscript(transcript, true);
+          HapticFeedback.lightImpact();
         }),
         _realtimeService.onAudioReceived.listen((audioBytes) {
           _audioService.playAudioChunk(audioBytes);
           _aiLevel.value = _aiLevelProcessor.process(audioBytes);
-          if (!_isAISpeaking) setState(() => _isAISpeaking = true);
+          if (!_isAISpeaking && mounted) {
+            setState(() => _isAISpeaking = true);
+          }
           _aiSpeakingTimer?.cancel();
-          _aiSpeakingTimer = Timer(const Duration(milliseconds: 300), () {
+          _aiSpeakingTimer = Timer(const Duration(milliseconds: 600), () {
             if (mounted) {
               setState(() => _isAISpeaking = false);
-              _aiLevel.value = 0.0;
               _aiLevelProcessor.reset();
             }
           });
         }),
         _realtimeService.onSpeechStarted.listen((_) {
+          HapticFeedback.selectionClick();
           setState(() => _isSpeaking = true);
           _audioService.stopPlayback();
           _realtimeService.cancelResponse();
@@ -253,13 +261,14 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           }
         }),
         _realtimeService.onSpeechStopped.listen((_) {
+          HapticFeedback.selectionClick();
           setState(() => _isSpeaking = false);
         }),
         _realtimeService.onError.listen((error) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text(error)),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(error)));
           }
         }),
         _realtimeService.onDone.listen((_) {
@@ -283,9 +292,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     } catch (e) {
       setState(() => _isConnecting = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -299,14 +308,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
 
   Future<void> _endConversation() async {
+    HapticFeedback.lightImpact();
     _sessionTimer?.cancel();
     _cancelSubscriptions();
     _realtimeService.disconnect();
@@ -332,29 +342,304 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     ref.invalidate(memoriesProvider);
   }
 
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
-        );
+  void _addFloatingTranscript(String text, bool isUser) {
+    setState(() {
+      _floatingTranscripts.add(
+        _FloatingTranscript(
+          text: text,
+          isUser: isUser,
+          createdAt: DateTime.now(),
+        ),
+      );
+      // Keep max 3
+      if (_floatingTranscripts.length > 3) {
+        _floatingTranscripts.removeAt(0);
+      }
+    });
+    // Auto-remove after 3 seconds
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _floatingTranscripts.removeWhere(
+            (t) => DateTime.now().difference(t.createdAt).inSeconds >= 3,
+          );
+        });
       }
     });
   }
 
+  bool get _active => _isConnected || _isConnecting;
+
   @override
   Widget build(BuildContext context) {
-    if (_quotaExceeded) {
-      return _buildQuotaExceededView();
-    }
+    if (_quotaExceeded) return _buildQuotaExceededView();
 
     return Scaffold(
       backgroundColor: AppColors.white,
-      appBar: _isConnected ? _buildAppBar() : _buildIdleAppBar(),
       body: SafeArea(
-        child: _isConnected ? _buildConversationView() : _buildStartView(),
+        child: Stack(
+          children: [
+            // Main content
+            Column(
+              children: [
+                // Top header area
+                SizedBox(
+                  height: 60,
+                  child: Stack(
+                    children: [
+                      // Profile avatar — top left, fades out when active
+                      Positioned(
+                        top: 12,
+                        left: 16,
+                        child: AnimatedOpacity(
+                          opacity: _active ? 0.0 : 1.0,
+                          duration: const Duration(milliseconds: 400),
+                          child: GestureDetector(
+                            onTap: _active
+                                ? null
+                                : () {
+                                    HapticFeedback.lightImpact();
+                                    context.push('/profile');
+                                  },
+                            child: Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(
+                                color: AppColors.warmStoneSurface,
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.comfortable,
+                                ),
+                                boxShadow: AppShadows.warmLift,
+                              ),
+                              child: Center(
+                                child: Text(
+                                  _userName.isNotEmpty
+                                      ? _userName[0].toUpperCase()
+                                      : '?',
+                                  style: AppTypography.caption.copyWith(
+                                    fontWeight: FontWeight.w500,
+                                    fontSize: 14,
+                                    color: AppColors.black,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      // Logo — center top, fades in when active
+                      Center(
+                        child: AnimatedOpacity(
+                          opacity: _active ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 400),
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Image.asset(
+                              'assets/icon/app_icon.png',
+                              width: 48,
+                              height: 48,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Center area — orb + stop button
+                Expanded(
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        // Logo + welcome text — fades out when active
+                        AnimatedOpacity(
+                          opacity: _active ? 0.0 : 1.0,
+                          duration: const Duration(milliseconds: 400),
+                          child: AnimatedSlide(
+                            offset: _active
+                                ? const Offset(0, -0.3)
+                                : Offset.zero,
+                            duration: const Duration(milliseconds: 500),
+                            curve: Curves.easeInOutCubic,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Image.asset(
+                                  'assets/icon/app_icon.png',
+                                  width: 80,
+                                  height: 80,
+                                ),
+                                const SizedBox(height: 16),
+                                Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 40,
+                                  ),
+                                  child: Text(
+                                    'Hey $_userName,\n$_personaName is ready to chat.',
+                                    style: AppTypography.bodyStandard.copyWith(
+                                      color: AppColors.warmGray,
+                                      fontSize: 18,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        AnimatedContainer(
+                          duration: const Duration(milliseconds: 500),
+                          curve: Curves.easeInOutCubic,
+                          height: _active ? 0 : 40,
+                        ),
+
+                        // The orb / start circle
+                        _buildOrb(),
+
+                        // Stop button — fades in when connected
+                        AnimatedOpacity(
+                          opacity: _isConnected ? 1.0 : 0.0,
+                          duration: const Duration(milliseconds: 400),
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 40),
+                            child: GestureDetector(
+                              onTap: _isConnected ? _endConversation : null,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 10,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.warmStoneSurface,
+                                  borderRadius: BorderRadius.circular(
+                                    AppRadius.pill,
+                                  ),
+                                  boxShadow: AppShadows.warmLift,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.stop_rounded,
+                                      size: 18,
+                                      color: AppColors.black,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Stop',
+                                      style: AppTypography.button.copyWith(
+                                        color: AppColors.black,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
+            // Floating transcripts — positioned overlay above orb, no layout change
+            if (_isConnected && _floatingTranscripts.isNotEmpty)
+              Positioned(
+                left: 24,
+                right: 24,
+                top: MediaQuery.of(context).size.height * 0.18,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _floatingTranscripts.map((t) {
+                    return Container(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: t.isUser
+                            ? AppColors.warmStoneSurface
+                            : AppColors.nearWhite,
+                        borderRadius: BorderRadius.circular(AppRadius.card),
+                      ),
+                      child: Text(
+                        t.text,
+                        style: AppTypography.bodyStandard.copyWith(
+                          color: AppColors.warmGray,
+                        ),
+                        textAlign: TextAlign.center,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrb() {
+    final orbState = _isAISpeaking
+        ? OrbState.aiSpeaking
+        : _isSpeaking
+            ? OrbState.userSpeaking
+            : OrbState.idle;
+
+    return GestureDetector(
+      onTap: (!_isConnected && !_isConnecting) ? _startConversation : null,
+      child: SizedBox(
+        width: 260,
+        height: 260,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            VoiceOrbWidget(
+              state: orbState,
+              micLevel: _micLevel,
+              aiLevel: _aiLevel,
+            ),
+            // "Start talking" overlay — only when idle
+            if (!_isConnected)
+              AnimatedOpacity(
+                opacity: _isConnecting ? 0.0 : 1.0,
+                duration: const Duration(milliseconds: 300),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.mic_rounded,
+                      size: 48,
+                      color: AppColors.warmGray,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Start talking',
+                      style: AppTypography.button.copyWith(
+                        color: AppColors.warmGray,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            // Loading spinner when connecting
+            if (_isConnecting)
+              const SizedBox(
+                width: 32,
+                height: 32,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppColors.warmGray,
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -396,7 +681,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 _quotaResetAt.isNotEmpty
                     ? 'Come back after ${_quotaResetAt.substring(0, 16).replaceAll('T', ' ')} to chat with $_personaName again!'
                     : 'Come back tomorrow to chat with $_personaName again!',
-                style: AppTypography.bodyStandard.copyWith(color: AppColors.warmGray),
+                style: AppTypography.bodyStandard.copyWith(
+                  color: AppColors.warmGray,
+                ),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -405,179 +692,16 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       ),
     );
   }
+}
 
-  PreferredSizeWidget _buildIdleAppBar() {
-    return AppBar(
-      backgroundColor: AppColors.white,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      leading: Padding(
-        padding: const EdgeInsets.only(left: 12),
-        child: GestureDetector(
-          onTap: () => context.push('/profile'),
-          child: Center(
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: AppColors.warmStoneSurface,
-                borderRadius: BorderRadius.circular(AppRadius.comfortable),
-                boxShadow: AppShadows.warmLift,
-              ),
-              child: Center(
-                child: Text(
-                  _userName.isNotEmpty ? _userName[0].toUpperCase() : '?',
-                  style: AppTypography.caption.copyWith(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 14,
-                    color: AppColors.black,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+class _FloatingTranscript {
+  final String text;
+  final bool isUser;
+  final DateTime createdAt;
 
-  PreferredSizeWidget _buildAppBar() {
-    return AppBar(
-      backgroundColor: AppColors.white,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      centerTitle: true,
-      title: Text(
-        _personaName,
-        style: AppTypography.nav.copyWith(color: AppColors.black),
-      ),
-      bottom: PreferredSize(
-        preferredSize: const Size.fromHeight(25),
-        child: Column(
-          children: [
-            QuotaBarWidget(
-              secondsRemaining: _secondsRemaining,
-              totalSeconds: _totalSeconds,
-            ),
-            const Divider(height: 1, color: AppColors.borderSubtle),
-          ],
-        ),
-      ),
-      actions: [
-        Padding(
-          padding: const EdgeInsets.only(right: 8),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: AppColors.warmStoneSurface,
-              borderRadius: BorderRadius.circular(AppRadius.pill),
-              boxShadow: AppShadows.warmLift,
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _endConversation,
-                borderRadius: BorderRadius.circular(AppRadius.pill),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Text(
-                    'End',
-                    style: AppTypography.button.copyWith(color: AppColors.black),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildConversationView() {
-    final orbState = _isAISpeaking
-        ? OrbState.aiSpeaking
-        : _isSpeaking
-            ? OrbState.userSpeaking
-            : OrbState.idle;
-
-    return Column(
-      children: [
-        Expanded(
-          flex: 3,
-          child: Center(
-            child: VoiceOrbWidget(
-              state: orbState,
-              micLevel: _micLevel,
-              aiLevel: _aiLevel,
-            ),
-          ),
-        ),
-        Expanded(
-          flex: 2,
-          child: TranscriptWidget(
-            entries: _entries,
-            scrollController: _scrollController,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStartView() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 40),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              'Hey $_userName,\n$_personaName is ready to chat.',
-              style: AppTypography.sectionHeading,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 64),
-            GestureDetector(
-              onTap: _isConnecting ? null : _startConversation,
-              child: Container(
-                width: 180,
-                height: 180,
-                decoration: BoxDecoration(
-                  color: AppColors.warmStoneSurface,
-                  shape: BoxShape.circle,
-                  boxShadow: AppShadows.warmLift,
-                ),
-                child: _isConnecting
-                    ? const Center(
-                        child: SizedBox(
-                          width: 32,
-                          height: 32,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.black,
-                          ),
-                        ),
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.mic_rounded,
-                            size: 48,
-                            color: AppColors.black,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Start talking',
-                            style: AppTypography.button.copyWith(
-                              color: AppColors.black,
-                            ),
-                          ),
-                        ],
-                      ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  _FloatingTranscript({
+    required this.text,
+    required this.isUser,
+    required this.createdAt,
+  });
 }

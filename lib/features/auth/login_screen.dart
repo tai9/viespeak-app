@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers/providers.dart';
@@ -26,6 +27,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handleEmailAuth() async {
+    HapticFeedback.mediumImpact();
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     if (email.isEmpty || password.isEmpty) return;
@@ -40,9 +42,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -50,14 +52,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _handleGoogleSignIn() async {
+    HapticFeedback.mediumImpact();
     setState(() => _loading = true);
     try {
       await ref.read(authServiceProvider).signInWithGoogle();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -75,17 +78,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Image.asset(
-                  'assets/icon/app_icon.png',
-                  width: 96,
-                  height: 96,
-                ),
+                Image.asset('assets/icon/app_icon.png', width: 96, height: 96),
                 const SizedBox(height: 16),
                 Text('VieSpeak', style: AppTypography.displayHero),
                 const SizedBox(height: 12),
                 Text(
                   'Practice English with AI companions',
-                  style: AppTypography.body.copyWith(color: AppColors.darkGray),
+                  style: AppTypography.bodyStandard.copyWith(
+                    color: AppColors.warmGray,
+                  ),
                 ),
                 const SizedBox(height: 48),
 
@@ -95,14 +96,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
                     hintText: 'Email',
-                    hintStyle: AppTypography.body.copyWith(color: AppColors.warmGray),
+                    hintStyle: AppTypography.body.copyWith(
+                      color: AppColors.warmGray,
+                    ),
                     filled: true,
                     fillColor: AppColors.warmStoneSurface,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.comfortable),
+                      borderRadius: BorderRadius.circular(
+                        AppRadius.comfortable,
+                      ),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -113,14 +121,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   obscureText: true,
                   decoration: InputDecoration(
                     hintText: 'Password',
-                    hintStyle: AppTypography.body.copyWith(color: AppColors.warmGray),
+                    hintStyle: AppTypography.body.copyWith(
+                      color: AppColors.warmGray,
+                    ),
                     filled: true,
                     fillColor: AppColors.warmStoneSurface,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppRadius.comfortable),
+                      borderRadius: BorderRadius.circular(
+                        AppRadius.comfortable,
+                      ),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 14,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 20),
@@ -139,12 +154,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
                 // Toggle sign in / sign up
                 TextButton(
-                  onPressed: () => setState(() => _isSignUp = !_isSignUp),
+                  onPressed: () {
+                    HapticFeedback.selectionClick();
+                    setState(() => _isSignUp = !_isSignUp);
+                  },
                   child: Text(
                     _isSignUp
                         ? 'Already have an account? Sign in'
                         : "Don't have an account? Sign up",
-                    style: AppTypography.caption.copyWith(color: AppColors.darkGray),
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.darkGray,
+                    ),
                   ),
                 ),
 
@@ -153,15 +173,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 // Divider
                 Row(
                   children: [
-                    const Expanded(child: Divider(color: AppColors.borderSubtle)),
+                    const Expanded(
+                      child: Divider(color: AppColors.borderSubtle),
+                    ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Text(
                         'or',
-                        style: AppTypography.caption.copyWith(color: AppColors.warmGray),
+                        style: AppTypography.caption.copyWith(
+                          color: AppColors.warmGray,
+                        ),
                       ),
                     ),
-                    const Expanded(child: Divider(color: AppColors.borderSubtle)),
+                    const Expanded(
+                      child: Divider(color: AppColors.borderSubtle),
+                    ),
                   ],
                 ),
 
@@ -221,7 +247,9 @@ class _PrimaryButton extends StatelessWidget {
                   )
                 : Text(
                     label,
-                    style: AppTypography.button.copyWith(color: AppColors.white),
+                    style: AppTypography.button.copyWith(
+                      color: AppColors.white,
+                    ),
                   ),
           ),
         ),
@@ -234,10 +262,7 @@ class _GoogleSignInButton extends StatelessWidget {
   final bool loading;
   final VoidCallback onPressed;
 
-  const _GoogleSignInButton({
-    required this.loading,
-    required this.onPressed,
-  });
+  const _GoogleSignInButton({required this.loading, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {

@@ -50,6 +50,7 @@ class MockRealtimeService extends RealtimeService {
         if (_speaking) {
           _speaking = false;
           speechStoppedController.add(null);
+          userTranscriptController.add('[dev mode] speech detected');
           debugPrint('[MockRealtime] Speech stopped');
         }
       });
