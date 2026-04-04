@@ -1,32 +1,35 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 
-import '../../core/services/api_service.dart';
-import '../../core/services/base_auth_service.dart';
+import '../../core/providers/profile_providers.dart';
+import '../../core/providers/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/error_utils.dart';
 
-class MajorSelectionScreen extends StatefulWidget {
+class MajorSelectionScreen extends ConsumerStatefulWidget {
   const MajorSelectionScreen({super.key});
 
   @override
-  State<MajorSelectionScreen> createState() => _MajorSelectionScreenState();
+  ConsumerState<MajorSelectionScreen> createState() => _MajorSelectionScreenState();
 }
 
-class _MajorSelectionScreenState extends State<MajorSelectionScreen> {
+class _MajorSelectionScreenState extends ConsumerState<MajorSelectionScreen> {
   bool _loading = false;
 
   Future<void> _selectMajor(String major) async {
     setState(() => _loading = true);
     try {
-      final auth = context.read<BaseAuthService>();
-      final api = context.read<ApiService>();
+      final auth = ref.read(authServiceProvider);
+      final api = ref.read(apiServiceProvider);
       await api.createProfile(
         name: auth.userName,
         major: major,
       );
-      if (mounted) context.go('/conversation?major=$major');
+      if (mounted) {
+        ref.invalidate(profileProvider);
+        context.go('/conversation?major=$major');
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

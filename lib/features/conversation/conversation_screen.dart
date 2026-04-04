@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 
-import '../../core/services/api_service.dart';
+import '../../core/providers/profile_providers.dart';
+import '../../core/providers/providers.dart';
 import '../../core/services/audio_service.dart';
-import '../../core/services/base_auth_service.dart';
 import '../../core/services/realtime_service.dart';
 import '../../core/services/session_service.dart';
 import '../../core/theme/app_theme.dart';
@@ -14,18 +14,18 @@ import '../../shared/utils/error_utils.dart';
 import '../../shared/widgets/quota_bar_widget.dart';
 import 'transcript_widget.dart';
 
-class ConversationScreen extends StatefulWidget {
+class ConversationScreen extends ConsumerStatefulWidget {
   final String major;
 
   const ConversationScreen({super.key, required this.major});
 
   @override
-  State<ConversationScreen> createState() => _ConversationScreenState();
+  ConsumerState<ConversationScreen> createState() => _ConversationScreenState();
 }
 
-class _ConversationScreenState extends State<ConversationScreen> {
-  RealtimeService? _realtimeService;
-  SessionService? _sessionService;
+class _ConversationScreenState extends ConsumerState<ConversationScreen> {
+  late final RealtimeService _realtimeService;
+  late final SessionService _sessionService;
   final _audioService = AudioService();
   final _scrollController = ScrollController();
   final _entries = <TranscriptEntry>[];
@@ -48,20 +48,20 @@ class _ConversationScreenState extends State<ConversationScreen> {
   final _transcriptLog = <Map<String, String>>[];
 
   String get _personaName => widget.major == 'IT' ? 'Alex' : 'Sarah';
-  String get _userName => context.read<BaseAuthService>().userName;
+  String get _userName => ref.read(authServiceProvider).userName;
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _realtimeService ??= context.read<RealtimeService>();
-    _sessionService ??= context.read<SessionService>();
+  void initState() {
+    super.initState();
+    _realtimeService = ref.read(realtimeServiceProvider);
+    _sessionService = ref.read(sessionServiceProvider);
   }
 
   @override
   void dispose() {
     _sessionTimer?.cancel();
     _cancelSubscriptions();
-    _realtimeService?.disconnect();
+    _realtimeService.disconnect();
     _audioService.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -76,12 +76,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   Future<void> _startConversation() async {
     setState(() => _isConnecting = true);
-    final apiService = context.read<ApiService>();
+    final apiService = ref.read(apiServiceProvider);
     try {
       // 1. Initialize session — get ephemeral token from backend
       final SessionInitResult sessionInit;
       try {
-        sessionInit = await _sessionService!.getSessionInit();
+        sessionInit = await _sessionService.getSessionInit();
       } on QuotaExceededException catch (e) {
         setState(() {
           _isConnecting = false;
@@ -115,20 +115,20 @@ class _ConversationScreenState extends State<ConversationScreen> {
       }
 
       // 3. Connect to OpenAI Realtime API
-      await _realtimeService!.connect(
+      await _realtimeService.connect(
         token: sessionInit.token,
         model: sessionInit.model,
       );
 
       // 4. Send session config (audio format + VAD)
-      _realtimeService!.sendSessionUpdate();
+      _realtimeService.sendSessionUpdate();
 
       // 5. Start mic
       await _startMic();
 
       // 6. Listen to realtime events
       _subscriptions.addAll([
-        _realtimeService!.onAITranscriptDelta.listen((delta) {
+        _realtimeService.onAITranscriptDelta.listen((delta) {
           _currentAITranscript.write(delta);
           setState(() {
             if (_entries.isNotEmpty &&
@@ -147,7 +147,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
           });
           _scrollToBottom();
         }),
-        _realtimeService!.onAITranscriptDone.listen((transcript) {
+        _realtimeService.onAITranscriptDone.listen((transcript) {
           setState(() {
             if (_entries.isNotEmpty && _entries.last.speaker == 'assistant') {
               _entries.last = TranscriptEntry(
@@ -161,7 +161,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
           _transcriptLog.add({'role': 'assistant', 'text': transcript});
           _scrollToBottom();
         }),
-        _realtimeService!.onUserTranscript.listen((transcript) {
+        _realtimeService.onUserTranscript.listen((transcript) {
           if (transcript.trim().isEmpty) return;
           setState(() {
             _entries.add(TranscriptEntry(
@@ -173,13 +173,13 @@ class _ConversationScreenState extends State<ConversationScreen> {
           _transcriptLog.add({'role': 'user', 'text': transcript});
           _scrollToBottom();
         }),
-        _realtimeService!.onAudioReceived.listen((audioBytes) {
+        _realtimeService.onAudioReceived.listen((audioBytes) {
           _audioService.playAudioChunk(audioBytes);
         }),
-        _realtimeService!.onSpeechStarted.listen((_) {
+        _realtimeService.onSpeechStarted.listen((_) {
           setState(() => _isSpeaking = true);
           _audioService.stopPlayback();
-          _realtimeService!.cancelResponse();
+          _realtimeService.cancelResponse();
           // Finalize partial AI transcript on interruption
           if (_entries.isNotEmpty &&
               _entries.last.speaker == 'assistant' &&
@@ -198,17 +198,17 @@ class _ConversationScreenState extends State<ConversationScreen> {
             _currentAITranscript = StringBuffer();
           }
         }),
-        _realtimeService!.onSpeechStopped.listen((_) {
+        _realtimeService.onSpeechStopped.listen((_) {
           setState(() => _isSpeaking = false);
         }),
-        _realtimeService!.onError.listen((error) {
+        _realtimeService.onError.listen((error) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(error)),
             );
           }
         }),
-        _realtimeService!.onDone.listen((_) {
+        _realtimeService.onDone.listen((_) {
           if (mounted) _endConversation();
         }),
       ]);
@@ -240,7 +240,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     try {
       await _audioService.startRecording();
       _audioService.micStream?.listen((pcm16Chunk) {
-        _realtimeService?.sendAudio(pcm16Chunk);
+        _realtimeService.sendAudio(pcm16Chunk);
       });
     } catch (e) {
       if (mounted) {
@@ -254,7 +254,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Future<void> _endConversation() async {
     _sessionTimer?.cancel();
     _cancelSubscriptions();
-    _realtimeService?.disconnect();
+    _realtimeService.disconnect();
     _audioService.stopRecording();
     _audioService.stopPlayback();
     setState(() => _isConnected = false);
@@ -263,7 +263,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     if (_sessionStartTime != null && _transcriptLog.isNotEmpty) {
       final duration = DateTime.now().difference(_sessionStartTime!).inSeconds;
       try {
-        await _sessionService!.endSession(
+        await _sessionService.endSession(
           transcript: _transcriptLog,
           durationSeconds: duration,
         );
@@ -271,6 +271,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
         // Non-critical — don't block UI
       }
     }
+
+    // Refresh cached quota + memories so profile screen shows fresh data
+    ref.invalidate(quotaProvider);
+    ref.invalidate(memoriesProvider);
   }
 
   void _scrollToBottom() {

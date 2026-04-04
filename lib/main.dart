@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app.dart';
 import 'core/config/env.dart';
+import 'core/providers/providers.dart';
 import 'core/services/api_service.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/base_auth_service.dart';
@@ -34,12 +35,12 @@ Future<void> main() async {
   final realtimeService = isDev ? MockRealtimeService() : RealtimeService();
 
   runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider<BaseAuthService>.value(value: authService),
-        Provider<ApiService>.value(value: apiService),
-        Provider<SessionService>.value(value: sessionService),
-        Provider<RealtimeService>.value(value: realtimeService),
+    ProviderScope(
+      overrides: [
+        authServiceProvider.overrideWithValue(authService),
+        apiServiceProvider.overrideWithValue(apiService),
+        sessionServiceProvider.overrideWithValue(sessionService),
+        realtimeServiceProvider.overrideWithValue(realtimeService),
       ],
       child: const ViespeakApp(),
     ),

@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'core/providers/providers.dart';
 import 'core/router/app_router.dart';
-import 'core/services/base_auth_service.dart';
 import 'core/theme/app_theme.dart';
 
-class ViespeakApp extends StatelessWidget {
+class ViespeakApp extends ConsumerWidget {
   const ViespeakApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final authService = context.read<BaseAuthService>();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authService = ref.read(authServiceProvider);
     return MaterialApp.router(
       title: 'VieSpeak',
       debugShowCheckedModeBanner: false,

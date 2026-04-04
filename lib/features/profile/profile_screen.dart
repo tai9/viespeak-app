@@ -1,52 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 
-import '../../core/services/api_service.dart';
-import '../../core/services/base_auth_service.dart';
+import '../../core/providers/profile_providers.dart';
+import '../../core/providers/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/error_utils.dart';
 
-class ProfileScreen extends StatefulWidget {
+class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
   @override
-  State<ProfileScreen> createState() => _ProfileScreenState();
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
-  Map<String, dynamic>? _profile;
-  Map<String, dynamic>? _quota;
-  List<Map<String, dynamic>> _memories = [];
-  bool _loading = true;
+class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _signingOut = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadData();
-  }
-
-  Future<void> _loadData() async {
-    final api = context.read<ApiService>();
-    final results = await Future.wait([
-      api.getProfile(),
-      api.getMemories(),
-      api.getQuota(),
-    ]);
-    if (!mounted) return;
-    setState(() {
-      _profile = results[0] as Map<String, dynamic>?;
-      _memories = results[1] as List<Map<String, dynamic>>;
-      _quota = results[2] as Map<String, dynamic>?;
-      _loading = false;
-    });
-  }
 
   Future<void> _handleSignOut() async {
     setState(() => _signingOut = true);
     try {
-      await context.read<BaseAuthService>().signOut();
+      await ref.read(authServiceProvider).signOut();
+      ref.invalidate(profileProvider);
+      ref.invalidate(quotaProvider);
+      ref.invalidate(memoriesProvider);
     } catch (e) {
       if (mounted) {
         setState(() => _signingOut = false);
@@ -59,6 +36,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final profileAsync = ref.watch(profileProvider);
+    final quotaAsync = ref.watch(quotaProvider);
+    final memoriesAsync = ref.watch(memoriesProvider);
+
     return Scaffold(
       backgroundColor: AppColors.white,
       appBar: AppBar(
@@ -79,56 +60,99 @@ class _ProfileScreenState extends State<ProfileScreen> {
           child: Divider(height: 1, color: AppColors.borderSubtle),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                  child: _buildProfileCard(),
-                ),
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: _buildQuotaCard(),
-                ),
-                const SizedBox(height: 24),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: _buildSectionTitle('Conversation history'),
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: _memories.isEmpty
-                      ? Center(
-                          child: Text(
-                            'No conversations yet. Start talking!',
-                            style: AppTypography.body.copyWith(color: AppColors.warmGray),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          itemCount: _memories.length,
-                          itemBuilder: (context, index) =>
-                              _buildMemoryCard(_memories[index]),
-                        ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
-                  child: _buildSignOutButton(),
-                ),
-                const SizedBox(height: 12),
-                _buildAppVersion(),
-                const SizedBox(height: 24),
-              ],
-            ),
+      body: _buildBody(profileAsync, quotaAsync, memoriesAsync),
     );
   }
 
-  Widget _buildProfileCard() {
-    final name = _profile?['name'] as String? ?? 'Unknown';
-    final major = _profile?['major'] as String? ?? 'Not set';
-    final level = _profile?['level'] as String? ?? '—';
+  Widget _buildBody(
+    AsyncValue<Map<String, dynamic>?> profileAsync,
+    AsyncValue<Map<String, dynamic>?> quotaAsync,
+    AsyncValue<List<Map<String, dynamic>>> memoriesAsync,
+  ) {
+    // Show loading if profile is still loading
+    if (profileAsync.isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Show error if profile failed
+    if (profileAsync.hasError) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              'Failed to load profile',
+              style: AppTypography.body.copyWith(color: AppColors.warmGray),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () => ref.invalidate(profileProvider),
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final profile = profileAsync.value;
+    final quota = quotaAsync.valueOrNull;
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+          child: _buildProfileCard(profile),
+        ),
+        const SizedBox(height: 16),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: _buildQuotaCard(quota),
+        ),
+        const SizedBox(height: 24),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: _buildSectionTitle('Conversation history'),
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: memoriesAsync.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (error, _) => Center(
+              child: Text(
+                'Failed to load history',
+                style: AppTypography.body.copyWith(color: AppColors.warmGray),
+              ),
+            ),
+            data: (memories) => memories.isEmpty
+                ? Center(
+                    child: Text(
+                      'No conversations yet. Start talking!',
+                      style: AppTypography.body.copyWith(color: AppColors.warmGray),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    itemCount: memories.length,
+                    itemBuilder: (context, index) =>
+                        _buildMemoryCard(memories[index]),
+                  ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+          child: _buildSignOutButton(),
+        ),
+        const SizedBox(height: 12),
+        _buildAppVersion(),
+        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  Widget _buildProfileCard(Map<String, dynamic>? profile) {
+    final name = profile?['name'] as String? ?? 'Unknown';
+    final major = profile?['major'] as String? ?? 'Not set';
+    final level = profile?['level'] as String? ?? '—';
     final persona = major == 'IT' ? 'Alex' : 'Sarah';
 
     return DecoratedBox(
@@ -176,15 +200,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildQuotaCard() {
-    if (_quota == null) {
+  Widget _buildQuotaCard(Map<String, dynamic>? quota) {
+    if (quota == null) {
       return const SizedBox.shrink();
     }
 
-    final remainingSeconds = _quota!['remaining_seconds'] as int? ?? 0;
-    final totalSeconds = _quota!['total_seconds'] as int? ?? 600;
-    final sessionsToday = _quota!['sessions_today'] as int? ?? 0;
-    final maxSessions = _quota!['max_sessions'] as int? ?? 1;
+    final remainingSeconds = quota['remaining_seconds'] as int? ?? 0;
+    final totalSeconds = quota['total_seconds'] as int? ?? 600;
+    final sessionsToday = quota['sessions_today'] as int? ?? 0;
+    final maxSessions = quota['max_sessions'] as int? ?? 1;
     final progress = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0.0;
     final minutes = remainingSeconds ~/ 60;
     final seconds = remainingSeconds % 60;

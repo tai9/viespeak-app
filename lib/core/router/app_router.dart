@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:provider/provider.dart';
 
 import '../../features/auth/login_screen.dart';
 import '../../features/conversation/conversation_screen.dart';
 import '../../features/onboarding/major_selection_screen.dart';
 import '../../features/profile/profile_screen.dart';
-import '../services/api_service.dart';
+import '../providers/profile_providers.dart';
 import '../services/base_auth_service.dart';
 
 class SplashScreen extends StatelessWidget {
@@ -67,36 +67,30 @@ GoRouter appRouter(BaseAuthService authService) {
 }
 
 /// Checks if user has a profile, routes to major selection or conversation
-class _ProfileGate extends StatefulWidget {
+class _ProfileGate extends ConsumerWidget {
   const _ProfileGate();
 
   @override
-  State<_ProfileGate> createState() => _ProfileGateState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profileAsync = ref.watch(profileProvider);
 
-class _ProfileGateState extends State<_ProfileGate> {
-  @override
-  void initState() {
-    super.initState();
-    _checkProfile();
-  }
-
-  Future<void> _checkProfile() async {
-    final api = context.read<ApiService>();
-    final profile = await api.getProfile();
-
-    if (!mounted) return;
-
-    if (profile != null) {
-      final major = profile['major'] as String? ?? 'IT';
-      context.go('/conversation?major=$major');
-    } else {
-      context.go('/select-major');
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return const SplashScreen();
+    return profileAsync.when(
+      loading: () => const SplashScreen(),
+      error: (error, _) => Scaffold(
+        body: Center(child: Text('Error: $error')),
+      ),
+      data: (profile) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!context.mounted) return;
+          if (profile != null) {
+            final major = profile['major'] as String? ?? 'IT';
+            context.go('/conversation?major=$major');
+          } else {
+            context.go('/select-major');
+          }
+        });
+        return const SplashScreen();
+      },
+    );
   }
 }
