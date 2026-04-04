@@ -4,9 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-import '../config/env.dart';
-
-class WsService {
+class RealtimeService {
   WebSocketChannel? _channel;
   bool _isActive = false;
 
@@ -42,27 +40,28 @@ class WsService {
 
   bool get isConnected => _isActive;
 
-  Future<void> connect({required String token}) async {
-    final baseUrl = Env.wsBaseUrl.isNotEmpty ? Env.wsBaseUrl : Env.apiBaseUrl;
-    final scheme = baseUrl.startsWith('https') ? 'wss' : 'ws';
-    final host = baseUrl.replaceFirst(RegExp(r'https?://'), '');
-    // Also strip ws:// or wss:// if wsBaseUrl already has the scheme
-    final cleanHost = host.replaceFirst(RegExp(r'wss?://'), '');
-    final wsUrl = '$scheme://$cleanHost/ws/voice?token=$token';
+  /// Connect directly to OpenAI Realtime API using ephemeral token
+  Future<void> connect({
+    required String token,
+    required String model,
+  }) async {
+    final wsUrl = 'wss://api.openai.com/v1/realtime?model=$model';
+    debugPrint('[Realtime] Connecting to OpenAI Realtime API');
 
-    debugPrint('[WS] Connecting to $wsUrl');
-    _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+    _channel = WebSocketChannel.connect(
+      Uri.parse(wsUrl),
+      protocols: ['realtime', 'openai-insecure-api-key.$token', 'openai-beta.realtime-v1'],
+    );
     _isActive = true;
-    debugPrint('[WS] Channel created, listening for events');
 
     _channel!.stream.listen(
       _handleEvent,
       onError: (e) {
-        debugPrint('[WS] Error: $e');
+        debugPrint('[Realtime] Error: $e');
         errorController.add(e.toString());
       },
       onDone: () {
-        debugPrint('[WS] Connection closed');
+        debugPrint('[Realtime] Connection closed');
         _isActive = false;
         doneController.add(null);
       },
@@ -72,7 +71,7 @@ class WsService {
   void _handleEvent(dynamic message) {
     final event = jsonDecode(message as String) as Map<String, dynamic>;
     final type = event['type'] as String? ?? '';
-    debugPrint('[WS] Event: $type');
+    debugPrint('[Realtime] Event: $type');
 
     switch (type) {
       case 'session.created':
@@ -116,12 +115,39 @@ class WsService {
     }
   }
 
-  /// Send PCM16 audio chunk wrapped in input_audio_buffer.append event
+  /// Send session.update to configure audio format and VAD
+  void sendSessionUpdate() {
+    if (!_isActive) return;
+    _channel?.sink.add(jsonEncode({
+      'type': 'session.update',
+      'session': {
+        'modalities': ['audio', 'text'],
+        'input_audio_format': 'pcm16',
+        'output_audio_format': 'pcm16',
+        'input_audio_transcription': {'model': 'whisper-1'},
+        'turn_detection': {
+          'type': 'server_vad',
+          'threshold': 0.5,
+          'silence_duration_ms': 800,
+        },
+      },
+    }));
+  }
+
+  /// Send PCM16 audio chunk to OpenAI
   void sendAudio(Uint8List pcm16Bytes) {
     if (!_isActive) return;
     _channel?.sink.add(jsonEncode({
       'type': 'input_audio_buffer.append',
       'audio': base64Encode(pcm16Bytes),
+    }));
+  }
+
+  /// Cancel current AI response (on user interruption)
+  void cancelResponse() {
+    if (!_isActive) return;
+    _channel?.sink.add(jsonEncode({
+      'type': 'response.cancel',
     }));
   }
 

@@ -10,8 +10,10 @@ import 'core/services/auth_service.dart';
 import 'core/services/base_auth_service.dart';
 import 'core/services/mock_api_service.dart';
 import 'core/services/mock_auth_service.dart';
-import 'core/services/mock_ws_service.dart';
-import 'core/services/ws_service.dart';
+import 'core/services/mock_realtime_service.dart';
+import 'core/services/mock_session_service.dart';
+import 'core/services/realtime_service.dart';
+import 'core/services/session_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,14 +30,16 @@ Future<void> main() async {
 
   final BaseAuthService authService = isDev ? MockAuthService() : AuthService();
   final apiService = isDev ? MockApiService(authService) : ApiService(authService);
-  final wsService = isDev ? MockWsService() : WsService();
+  final sessionService = isDev ? MockSessionService(authService) : SessionService(authService);
+  final realtimeService = isDev ? MockRealtimeService() : RealtimeService();
 
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider<BaseAuthService>.value(value: authService),
         Provider<ApiService>.value(value: apiService),
-        Provider<WsService>.value(value: wsService),
+        Provider<SessionService>.value(value: sessionService),
+        Provider<RealtimeService>.value(value: realtimeService),
       ],
       child: const ViespeakApp(),
     ),

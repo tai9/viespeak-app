@@ -16,6 +16,7 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   Map<String, dynamic>? _profile;
+  Map<String, dynamic>? _quota;
   List<Map<String, dynamic>> _memories = [];
   bool _loading = true;
   bool _signingOut = false;
@@ -31,11 +32,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final results = await Future.wait([
       api.getProfile(),
       api.getMemories(),
+      api.getQuota(),
     ]);
     if (!mounted) return;
     setState(() {
       _profile = results[0] as Map<String, dynamic>?;
       _memories = results[1] as List<Map<String, dynamic>>;
+      _quota = results[2] as Map<String, dynamic>?;
       _loading = false;
     });
   }
@@ -83,6 +86,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
                   child: _buildProfileCard(),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: _buildQuotaCard(),
                 ),
                 const SizedBox(height: 24),
                 Padding(
@@ -161,6 +169,69 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuotaCard() {
+    if (_quota == null) {
+      return const SizedBox.shrink();
+    }
+
+    final remainingSeconds = _quota!['remaining_seconds'] as int? ?? 0;
+    final totalSeconds = _quota!['total_seconds'] as int? ?? 600;
+    final sessionsToday = _quota!['sessions_today'] as int? ?? 0;
+    final maxSessions = _quota!['max_sessions'] as int? ?? 1;
+    final progress = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0.0;
+    final minutes = remainingSeconds ~/ 60;
+    final seconds = remainingSeconds % 60;
+    final timeText = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    final isLow = remainingSeconds < 60;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.large),
+        boxShadow: AppShadows.outlineRing,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Today's quota", style: AppTypography.bodyMedium),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 6,
+                      backgroundColor: AppColors.borderSubtle,
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        isLow ? Colors.red.shade400 : AppColors.warmGray,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '$timeText left',
+                  style: AppTypography.caption.copyWith(
+                    color: isLow ? Colors.red.shade400 : AppColors.darkGray,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$sessionsToday / $maxSessions sessions used today',
+              style: AppTypography.caption.copyWith(color: AppColors.warmGray),
             ),
           ],
         ),

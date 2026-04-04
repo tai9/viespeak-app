@@ -34,6 +34,24 @@ class TranscriptWidget extends StatelessWidget {
       itemCount: entries.length,
       itemBuilder: (context, index) {
         final entry = entries[index];
+
+        // System messages (e.g. memory context hints)
+        if (entry.speaker == 'system') {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Center(
+              child: Text(
+                entry.text,
+                style: AppTypography.caption.copyWith(
+                  color: AppColors.warmGray,
+                  fontStyle: FontStyle.italic,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          );
+        }
+
         final isUser = entry.speaker == 'user';
 
         return Align(

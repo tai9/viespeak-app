@@ -48,6 +48,18 @@ class ApiService {
     );
   }
 
+  /// GET /session/quota — returns remaining quota for today
+  Future<Map<String, dynamic>?> getQuota() async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/session/quota'),
+      headers: _headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    return null;
+  }
+
   /// GET /api/memories — returns list of memory entries
   Future<List<Map<String, dynamic>>> getMemories() async {
     final response = await http.get(

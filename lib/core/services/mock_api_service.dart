@@ -24,6 +24,17 @@ class MockApiService extends ApiService {
   }
 
   @override
+  Future<Map<String, dynamic>?> getQuota() async {
+    await Future.delayed(const Duration(milliseconds: 200));
+    return {
+      'remaining_seconds': 420,
+      'total_seconds': 600,
+      'sessions_today': 0,
+      'max_sessions': 1,
+    };
+  }
+
+  @override
   Future<List<Map<String, dynamic>>> getMemories() async {
     await Future.delayed(const Duration(milliseconds: 300));
     return [

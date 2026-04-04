@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'ws_service.dart';
+import 'realtime_service.dart';
 
-class MockWsService extends WsService {
+class MockRealtimeService extends RealtimeService {
   Timer? _mockTimer;
   int _messageIndex = 0;
 
@@ -20,11 +20,21 @@ class MockWsService extends WsService {
   ];
 
   @override
-  Future<void> connect({required String token}) async {
+  Future<void> connect({
+    required String token,
+    required String model,
+  }) async {
     await Future.delayed(const Duration(milliseconds: 500));
-    sessionReadyController.add(null);
     _messageIndex = 0;
-    _startMockConversation();
+  }
+
+  @override
+  void sendSessionUpdate() {
+    // Simulate session ready after a short delay, then start mock conversation
+    Future.delayed(const Duration(milliseconds: 200), () {
+      sessionReadyController.add(null);
+      _startMockConversation();
+    });
   }
 
   void _startMockConversation() {
@@ -35,7 +45,6 @@ class MockWsService extends WsService {
       }
       final msg = _mockConversation[_messageIndex];
       if (msg['role'] == 'assistant') {
-        // Simulate streaming: emit delta then done
         aiTranscriptDeltaController.add(msg['text']!);
         aiTranscriptDoneController.add(msg['text']!);
       } else {
@@ -47,6 +56,11 @@ class MockWsService extends WsService {
 
   @override
   void sendAudio(Uint8List pcm16Bytes) {
+    // no-op in mock
+  }
+
+  @override
+  void cancelResponse() {
     // no-op in mock
   }
 

@@ -4,11 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/services/api_service.dart';
 import '../../core/services/audio_service.dart';
 import '../../core/services/base_auth_service.dart';
-import '../../core/services/ws_service.dart';
+import '../../core/services/realtime_service.dart';
+import '../../core/services/session_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/error_utils.dart';
+import '../../shared/widgets/quota_bar_widget.dart';
 import 'transcript_widget.dart';
 
 class ConversationScreen extends StatefulWidget {
@@ -21,7 +24,8 @@ class ConversationScreen extends StatefulWidget {
 }
 
 class _ConversationScreenState extends State<ConversationScreen> {
-  WsService? _wsService;
+  RealtimeService? _realtimeService;
+  SessionService? _sessionService;
   final _audioService = AudioService();
   final _scrollController = ScrollController();
   final _entries = <TranscriptEntry>[];
@@ -29,12 +33,19 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   bool _isConnected = false;
   bool _isConnecting = false;
-  bool _isSpeaking = false; // user is speaking
+  bool _isSpeaking = false;
+  bool _quotaExceeded = false;
+  String _quotaResetAt = '';
   Timer? _sessionTimer;
-  int _secondsRemaining = 600; // 10 minutes
+  int _secondsRemaining = 0;
+  int _totalSeconds = 0;
+  DateTime? _sessionStartTime;
 
   // Accumulate streaming AI transcript
   StringBuffer _currentAITranscript = StringBuffer();
+
+  // Collect transcript for endSession call
+  final _transcriptLog = <Map<String, String>>[];
 
   String get _personaName => widget.major == 'IT' ? 'Alex' : 'Sarah';
   String get _userName => context.read<BaseAuthService>().userName;
@@ -42,14 +53,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _wsService ??= context.read<WsService>();
+    _realtimeService ??= context.read<RealtimeService>();
+    _sessionService ??= context.read<SessionService>();
   }
 
   @override
   void dispose() {
     _sessionTimer?.cancel();
     _cancelSubscriptions();
-    _wsService?.disconnect();
+    _realtimeService?.disconnect();
     _audioService.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -64,31 +76,64 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   Future<void> _startConversation() async {
     setState(() => _isConnecting = true);
+    final apiService = context.read<ApiService>();
     try {
-      final token = context.read<BaseAuthService>().token;
-      if (token == null) {
-        setState(() => _isConnecting = false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Not authenticated. Please sign in again.')),
-          );
-        }
+      // 1. Initialize session — get ephemeral token from backend
+      final SessionInitResult sessionInit;
+      try {
+        sessionInit = await _sessionService!.getSessionInit();
+      } on QuotaExceededException catch (e) {
+        setState(() {
+          _isConnecting = false;
+          _quotaExceeded = true;
+          _quotaResetAt = e.resetAt;
+        });
         return;
       }
 
-      // Connect WebSocket
-      await _wsService!.connect(token: token);
+      _totalSeconds = sessionInit.remainingSeconds;
+      _secondsRemaining = sessionInit.remainingSeconds;
 
-      // Start mic immediately — don't wait for session.created
+      // 2. Fetch memories for context hint
+      try {
+        // apiService captured before async gap
+        final memories = await apiService.getMemories();
+        if (memories.isNotEmpty && mounted) {
+          final summary = memories.first['summary'] as String?;
+          if (summary != null && summary.isNotEmpty) {
+            setState(() {
+              _entries.add(TranscriptEntry(
+                speaker: 'system',
+                text: 'Last time: $summary',
+                isFinalized: true,
+              ));
+            });
+          }
+        }
+      } catch (_) {
+        // Memory fetch is non-critical, continue without it
+      }
+
+      // 3. Connect to OpenAI Realtime API
+      await _realtimeService!.connect(
+        token: sessionInit.token,
+        model: sessionInit.model,
+      );
+
+      // 4. Send session config (audio format + VAD)
+      _realtimeService!.sendSessionUpdate();
+
+      // 5. Start mic
       await _startMic();
 
-      // Listen to WS events
+      // 6. Listen to realtime events
       _subscriptions.addAll([
-        _wsService!.onAITranscriptDelta.listen((delta) {
+        _realtimeService!.onAITranscriptDelta.listen((delta) {
           _currentAITranscript.write(delta);
           setState(() {
-            // Update or add the current AI message
-            if (_entries.isNotEmpty && _entries.last.speaker == 'assistant' && !_entries.last.isFinalized) {
+            if (_entries.isNotEmpty &&
+                _entries.last.speaker == 'assistant' &&
+                !_entries.last.isFinalized) {
               _entries.last = TranscriptEntry(
                 speaker: 'assistant',
                 text: _currentAITranscript.toString(),
@@ -102,9 +147,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
           });
           _scrollToBottom();
         }),
-        _wsService!.onAITranscriptDone.listen((transcript) {
+        _realtimeService!.onAITranscriptDone.listen((transcript) {
           setState(() {
-            // Finalize the current AI message
             if (_entries.isNotEmpty && _entries.last.speaker == 'assistant') {
               _entries.last = TranscriptEntry(
                 speaker: 'assistant',
@@ -114,9 +158,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
             }
           });
           _currentAITranscript = StringBuffer();
+          _transcriptLog.add({'role': 'assistant', 'text': transcript});
           _scrollToBottom();
         }),
-        _wsService!.onUserTranscript.listen((transcript) {
+        _realtimeService!.onUserTranscript.listen((transcript) {
           if (transcript.trim().isEmpty) return;
           setState(() {
             _entries.add(TranscriptEntry(
@@ -125,32 +170,51 @@ class _ConversationScreenState extends State<ConversationScreen> {
               isFinalized: true,
             ));
           });
+          _transcriptLog.add({'role': 'user', 'text': transcript});
           _scrollToBottom();
         }),
-        _wsService!.onAudioReceived.listen((audioBytes) {
+        _realtimeService!.onAudioReceived.listen((audioBytes) {
           _audioService.playAudioChunk(audioBytes);
         }),
-        _wsService!.onSpeechStarted.listen((_) {
+        _realtimeService!.onSpeechStarted.listen((_) {
           setState(() => _isSpeaking = true);
-          // Interrupt AI audio when user starts speaking
           _audioService.stopPlayback();
+          _realtimeService!.cancelResponse();
+          // Finalize partial AI transcript on interruption
+          if (_entries.isNotEmpty &&
+              _entries.last.speaker == 'assistant' &&
+              !_entries.last.isFinalized) {
+            final partialText = _currentAITranscript.toString();
+            if (partialText.isNotEmpty) {
+              setState(() {
+                _entries.last = TranscriptEntry(
+                  speaker: 'assistant',
+                  text: partialText,
+                  isFinalized: true,
+                );
+              });
+              _transcriptLog.add({'role': 'assistant', 'text': partialText});
+            }
+            _currentAITranscript = StringBuffer();
+          }
         }),
-        _wsService!.onSpeechStopped.listen((_) {
+        _realtimeService!.onSpeechStopped.listen((_) {
           setState(() => _isSpeaking = false);
         }),
-        _wsService!.onError.listen((error) {
+        _realtimeService!.onError.listen((error) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text(error)),
             );
           }
         }),
-        _wsService!.onDone.listen((_) {
+        _realtimeService!.onDone.listen((_) {
           if (mounted) _endConversation();
         }),
       ]);
 
-      // Start session timer
+      // 7. Start countdown timer
+      _sessionStartTime = DateTime.now();
       _sessionTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
         setState(() => _secondsRemaining--);
         if (_secondsRemaining <= 0) {
@@ -176,7 +240,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     try {
       await _audioService.startRecording();
       _audioService.micStream?.listen((pcm16Chunk) {
-        _wsService?.sendAudio(pcm16Chunk);
+        _realtimeService?.sendAudio(pcm16Chunk);
       });
     } catch (e) {
       if (mounted) {
@@ -187,13 +251,26 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
   }
 
-  void _endConversation() {
+  Future<void> _endConversation() async {
     _sessionTimer?.cancel();
     _cancelSubscriptions();
-    _wsService?.disconnect();
+    _realtimeService?.disconnect();
     _audioService.stopRecording();
     _audioService.stopPlayback();
     setState(() => _isConnected = false);
+
+    // Send transcript + duration to backend
+    if (_sessionStartTime != null && _transcriptLog.isNotEmpty) {
+      final duration = DateTime.now().difference(_sessionStartTime!).inSeconds;
+      try {
+        await _sessionService!.endSession(
+          transcript: _transcriptLog,
+          durationSeconds: duration,
+        );
+      } catch (_) {
+        // Non-critical — don't block UI
+      }
+    }
   }
 
   void _scrollToBottom() {
@@ -208,19 +285,64 @@ class _ConversationScreenState extends State<ConversationScreen> {
     });
   }
 
-  String get _timerDisplay {
-    final minutes = _secondsRemaining ~/ 60;
-    final seconds = _secondsRemaining % 60;
-    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
-  }
-
   @override
   Widget build(BuildContext context) {
+    if (_quotaExceeded) {
+      return _buildQuotaExceededView();
+    }
+
     return Scaffold(
       backgroundColor: AppColors.white,
       appBar: _isConnected ? _buildAppBar() : _buildIdleAppBar(),
       body: SafeArea(
         child: _isConnected ? _buildConversationView() : _buildStartView(),
+      ),
+    );
+  }
+
+  Widget _buildQuotaExceededView() {
+    return Scaffold(
+      backgroundColor: AppColors.white,
+      appBar: AppBar(
+        backgroundColor: AppColors.white,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 8),
+          child: IconButton(
+            icon: const Icon(Icons.arrow_back_rounded, color: AppColors.black),
+            onPressed: () => context.pop(),
+          ),
+        ),
+      ),
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 40),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.timer_off_rounded,
+                size: 64,
+                color: AppColors.warmGray,
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'You\'ve used all your time for today.',
+                style: AppTypography.sectionHeading,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _quotaResetAt.isNotEmpty
+                    ? 'Come back after ${_quotaResetAt.substring(0, 16).replaceAll('T', ' ')} to chat with $_personaName again!'
+                    : 'Come back tomorrow to chat with $_personaName again!',
+                style: AppTypography.bodyStandard.copyWith(color: AppColors.warmGray),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -247,12 +369,20 @@ class _ConversationScreenState extends State<ConversationScreen> {
       scrolledUnderElevation: 0,
       centerTitle: true,
       title: Text(
-        '$_personaName  ·  $_timerDisplay',
+        _personaName,
         style: AppTypography.nav.copyWith(color: AppColors.black),
       ),
-      bottom: const PreferredSize(
-        preferredSize: Size.fromHeight(1),
-        child: Divider(height: 1, color: AppColors.borderSubtle),
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(25),
+        child: Column(
+          children: [
+            QuotaBarWidget(
+              secondsRemaining: _secondsRemaining,
+              totalSeconds: _totalSeconds,
+            ),
+            const Divider(height: 1, color: AppColors.borderSubtle),
+          ],
+        ),
       ),
       actions: [
         Padding(

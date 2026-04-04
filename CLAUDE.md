@@ -14,6 +14,7 @@ VieSpeak is an AI voice companion app that helps Vietnamese IT and Economics uni
 |---|---|
 | Mobile | Flutter (iOS + Android) |
 | Backend API | Golang (separate repo) |
+| Voice AI | OpenAI Realtime API (S2S — Speech-to-Speech) |
 
 ---
 
@@ -21,12 +22,14 @@ VieSpeak is an AI voice companion app that helps Vietnamese IT and Economics uni
 
 ```
 Flutter App
-    ↕ WebSocket (realtime voice)       → Golang Backend API
-    ↕ REST (auth, memory, users, etc.) → Golang Backend API
+    → GET /session/init             → Golang Backend (returns ephemeral token)
+    → WebSocket (realtime voice)    → OpenAI Realtime API (direct connection)
+    → POST /session/end             → Golang Backend (stores memory, deducts quota)
+    → REST (auth, profile, memory)  → Golang Backend
 ```
 
-The Golang backend is a separate repo. This repo is the **Flutter app only**.
-All communication goes through the backend API — auth, data, and voice.
+The Flutter app connects **directly** to OpenAI Realtime API using an ephemeral token.
+The Golang backend does NOT proxy audio — it only handles auth, quota, memory, and token generation.
 
 ---
 
@@ -42,9 +45,11 @@ lib/
 │   ├── theme/
 │   │   └── app_theme.dart          # Design system (ElevenLabs-inspired)
 │   ├── services/
-│   │   ├── auth_service.dart       # Auth via backend API
-│   │   ├── ws_service.dart         # WebSocket to backend
-│   │   └── api_service.dart        # REST calls to backend API (memory, users, sessions)
+│   │   ├── auth_service.dart       # Auth via Supabase
+│   │   ├── realtime_service.dart   # Direct WebSocket to OpenAI Realtime API
+│   │   ├── session_service.dart    # REST: session init (token) + session end
+│   │   ├── api_service.dart        # REST: profile, memory, quota
+│   │   └── audio_service.dart      # Mic recording + speaker playback (PCM16)
 │   └── router/
 │       └── app_router.dart
 ├── features/
@@ -52,11 +57,14 @@ lib/
 │   │   └── major_selection_screen.dart  # Choose IT or Economics
 │   ├── auth/
 │   │   └── login_screen.dart            # Google Sign-in
-│   └── conversation/
-│       ├── conversation_screen.dart     # Main screen — one tap to talk
-│       └── transcript_widget.dart       # Realtime transcript display
+│   ├── conversation/
+│   │   ├── conversation_screen.dart     # Main screen — one tap to talk
+│   │   └── transcript_widget.dart       # Realtime transcript display
+│   └── profile/
+│       └── profile_screen.dart          # User profile, quota, conversation history
 └── shared/
     └── widgets/
+        └── quota_bar_widget.dart         # Session time remaining indicator
 ```
 
 ---
@@ -66,7 +74,9 @@ lib/
 ```bash
 # .env
 API_BASE_URL=          # Golang backend REST API base URL
-WS_BASE_URL=           # Golang backend WebSocket URL
+SUPABASE_URL=          # Supabase project URL
+SUPABASE_ANON_KEY=     # Supabase anonymous key
+DEV_MODE=false         # true = use mock services (no backend/OpenAI needed)
 ```
 
 ---
@@ -90,12 +100,13 @@ WS_BASE_URL=           # Golang backend WebSocket URL
 ## Core Features — MVP Scope
 
 ### Must Have
-- [ ] Google Sign-in (via backend API)
+- [ ] Google Sign-in (via Supabase)
 - [ ] Major selection screen (IT → Alex, Economics → Sarah)
 - [ ] One tap to start voice conversation
 - [ ] Realtime transcript display
-- [ ] Session time limit: 10 minutes (free tier)
-- [ ] Memory: fetch previous session context, inject on session start
+- [ ] Session quota: time limit + daily session count
+- [ ] Memory: fetch previous session context, display hint on session start
+- [ ] Quota display on profile screen
 
 ### Must NOT Have (post-MVP)
 - Progress tracking / dashboard
@@ -112,10 +123,14 @@ WS_BASE_URL=           # Golang backend WebSocket URL
 App opens
   → "Hey [name], Alex is ready to chat."
   → One large button: "Start talking"
-  → WebSocket connects to backend API
-  → Voice streams both ways
+  → GET /session/init → receive ephemeral token + remaining_seconds
+  → Connect directly to OpenAI Realtime API (wss://api.openai.com/v1/realtime)
+  → Send session.update (PCM16 format, server VAD)
+  → Voice streams both ways (Flutter ↔ OpenAI)
   → Transcript displays in realtime
-  → Session ends after 10 minutes or user taps "End"
+  → On user interruption: stop playback + send response.cancel
+  → Session ends when quota hits 0 or user taps "End"
+  → POST /session/end → send transcript + duration to backend
 ```
 
 ---
@@ -124,14 +139,28 @@ App opens
 
 ```
 Start of session:
-  1. App fetches latest memory via backend API (GET /api/memory/:userId)
+  1. App fetches latest memory via backend API (GET /api/memories)
   2. Display context hint to user (e.g. "Last time you talked about...")
-  3. Backend injects memory into AI persona prompt automatically
+  3. Backend injects memory into AI persona prompt via ephemeral token
 
 End of session:
+  → App sends transcript + duration to backend (POST /session/end)
   → Backend handles summarization and storage
   → App can fetch updated memory on next session
 ```
+
+---
+
+## Backend API Endpoints (Golang)
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| GET | /session/init | Auth, check quota, build prompt, return ephemeral token |
+| POST | /session/end | Receive transcript + duration, summarize, store memory |
+| GET | /session/quota | Return remaining time + session count for profile |
+| GET | /api/profile | Fetch user profile |
+| POST | /api/profile | Create/update profile |
+| GET | /api/memories | Fetch conversation history |
 
 ---
 
@@ -150,13 +179,15 @@ End of session:
 - Feature-first folder structure
 - No over-engineering — MVP first, optimize later
 - Every feature must serve the core UX: open app → tap → talk
+- Audio format: PCM16, 24kHz, mono (matches OpenAI Realtime API)
 
 ---
 
 ## Development Order
 
-1. Google Sign-in (via backend API)
+1. Google Sign-in (via Supabase)
 2. Major selection screen
-3. Conversation screen — WebSocket + transcript
-4. Memory fetch + inject on session start
-5. End-to-end test with real backend
+3. Conversation screen — OpenAI Realtime API (S2S) + transcript
+4. Memory fetch + context hint on session start
+5. Quota tracking on profile screen
+6. End-to-end test with real backend + OpenAI
