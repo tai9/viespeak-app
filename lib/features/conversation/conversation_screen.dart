@@ -353,10 +353,30 @@ class _ConversationScreenState extends State<ConversationScreen> {
       elevation: 0,
       scrolledUnderElevation: 0,
       leading: Padding(
-        padding: const EdgeInsets.only(left: 8),
-        child: IconButton(
-          icon: const Icon(Icons.person_outline_rounded, color: AppColors.black),
-          onPressed: () => context.push('/profile'),
+        padding: const EdgeInsets.only(left: 12),
+        child: GestureDetector(
+          onTap: () => context.push('/profile'),
+          child: Center(
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: AppColors.warmStoneSurface,
+                borderRadius: BorderRadius.circular(AppRadius.comfortable),
+                boxShadow: AppShadows.warmLift,
+              ),
+              child: Center(
+                child: Text(
+                  _userName.isNotEmpty ? _userName[0].toUpperCase() : '?',
+                  style: AppTypography.caption.copyWith(
+                    fontWeight: FontWeight.w500,
+                    fontSize: 14,
+                    color: AppColors.black,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     );
