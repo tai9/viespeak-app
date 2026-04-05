@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/personas/persona.dart';
@@ -14,7 +15,9 @@ import '../../core/services/conversation_controller.dart';
 import '../../core/services/realtime_service.dart';
 import '../../core/services/session_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/utils/date_utils.dart';
 import '../../shared/utils/error_utils.dart';
+import '../../shared/utils/quota_utils.dart';
 import 'transcript_widget.dart';
 import 'voice_orb_widget.dart';
 
@@ -359,6 +362,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   Widget build(BuildContext context) {
     if (_quotaExceeded) return _buildQuotaExceededView();
 
+    final quotaAsync = ref.watch(quotaProvider);
+    final quota = quotaAsync.valueOrNull;
+
+    // Only allow start once the backend has confirmed both fields AND the
+    // cached quota still has headroom. Exhaustion is decided locally from
+    // the pre-fetched quota — no API round-trip just to get a 429.
+    final canStart =
+        quota != null &&
+        quota['max_sessions'] is int &&
+        quota['remaining_seconds'] is int &&
+        !isQuotaExhausted(quota);
+
     return Scaffold(
       backgroundColor: AppColors.white,
       body: SafeArea(
@@ -489,7 +504,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                           ),
 
                           // The orb / start circle
-                          _buildOrb(),
+                          _buildOrb(canStart: canStart),
 
                           // Stop button — fades in when connected
                           AnimatedOpacity(
@@ -580,7 +595,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     );
   }
 
-  Widget _buildOrb() {
+  Widget _buildOrb({required bool canStart}) {
     final convState = _controller.state.value;
     final orbState = switch (convState) {
       ConversationState.aiSpeaking => OrbState.aiSpeaking,
@@ -588,9 +603,25 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       ConversationState.idle => OrbState.idle,
     };
 
+    // Disabled only during the tiny cold-start window before quotaProvider
+    // resolves. Exhausted quota already short-circuits to the exhausted
+    // view in build(), so we don't need to handle it here.
+    final startBlocked = !canStart && !_isConnected && !_isConnecting;
+
     return GestureDetector(
       onTap: () {
         if (!_isConnected && !_isConnecting) {
+          // Cached quota already exhausted — flip straight to the exhausted
+          // view without hitting the backend.
+          if (isQuotaExhausted(ref.read(quotaProvider).valueOrNull)) {
+            HapticFeedback.lightImpact();
+            setState(() {
+              _quotaExceeded = true;
+              _quotaResetAt = '';
+            });
+            return;
+          }
+          if (!canStart) return;
           _startConversation();
         } else if (convState == ConversationState.aiSpeaking) {
           // Tap-to-interrupt: stop AI and hand the turn back to the user.
@@ -612,7 +643,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             // "Start talking" overlay — only when idle
             if (!_isConnected)
               AnimatedOpacity(
-                opacity: _isConnecting ? 0.0 : 1.0,
+                opacity: _isConnecting ? 0.0 : (startBlocked ? 0.4 : 1.0),
                 duration: const Duration(milliseconds: 300),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -648,6 +679,28 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     );
   }
 
+  /// Formats the quota reset instant in the device's local time.
+  ///
+  /// When the backend supplies a reset timestamp (on a 429 from
+  /// `/session/init`) it arrives as UTC — `formatTimestamp` handles the
+  /// conversion. Otherwise (local exhaustion from cached `/quota`, which
+  /// has no `reset_at` field) we fall back to midnight of the next local
+  /// day, matching the backend's daily reset semantics.
+  String _formatQuotaResetMessage(String rawResetAt) {
+    final fromBackend = formatTimestamp(rawResetAt);
+    if (fromBackend.isNotEmpty) {
+      return 'Come back after $fromBackend to chat again!';
+    }
+    final now = DateTime.now();
+    final nextMidnight = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).add(const Duration(days: 1));
+    final formatted = DateFormat('yyyy-MM-dd, HH:mm').format(nextMidnight);
+    return 'Come back after $formatted to chat again!';
+  }
+
   Widget _buildQuotaExceededView() {
     return Scaffold(
       backgroundColor: AppColors.white,
@@ -659,7 +712,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           padding: const EdgeInsets.only(left: 8),
           child: IconButton(
             icon: const Icon(Icons.arrow_back_rounded, color: AppColors.black),
-            onPressed: () => context.pop(),
+            // Dismiss the quota-exceeded overlay and return to the orb
+            // screen. /conversation is the root of the current nav stack,
+            // so context.pop() is a no-op here — just clear the flag.
+            onPressed: () => setState(() => _quotaExceeded = false),
           ),
         ),
       ),
@@ -682,9 +738,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               ),
               const SizedBox(height: 12),
               Text(
-                _quotaResetAt.isNotEmpty
-                    ? 'Come back after ${_quotaResetAt.substring(0, 16).replaceAll('T', ' ')} to chat again!'
-                    : 'Come back tomorrow to chat again!',
+                _formatQuotaResetMessage(_quotaResetAt),
                 style: AppTypography.bodyStandard.copyWith(
                   color: AppColors.warmGray,
                 ),

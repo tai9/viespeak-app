@@ -238,48 +238,48 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
           onTap: () => _openPersonaPicker(currentId: personaId),
           borderRadius: BorderRadius.circular(AppRadius.large),
           child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(
-          children: [
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                color: AppColors.warmStoneSurface,
-                borderRadius: BorderRadius.circular(AppRadius.comfortable),
-                boxShadow: AppShadows.warmLift,
-              ),
-              child: Center(
-                child: Text(
-                  name.isNotEmpty ? name[0].toUpperCase() : '?',
-                  style: AppTypography.sectionHeading,
-                ),
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(name, style: AppTypography.bodyMedium),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: AppTypography.caption.copyWith(
-                      color: AppColors.darkGray,
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: AppColors.warmStoneSurface,
+                    borderRadius: BorderRadius.circular(AppRadius.comfortable),
+                    boxShadow: AppShadows.warmLift,
+                  ),
+                  child: Center(
+                    child: Text(
+                      name.isNotEmpty ? name[0].toUpperCase() : '?',
+                      style: AppTypography.sectionHeading,
                     ),
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(name, style: AppTypography.bodyMedium),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        style: AppTypography.caption.copyWith(
+                          color: AppColors.darkGray,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.arrow_forward_ios_rounded,
+                  size: 16,
+                  color: AppColors.warmGray,
+                ),
+              ],
             ),
-            const Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 16,
-              color: AppColors.warmGray,
-            ),
-          ],
-        ),
-      ),
+          ),
         ),
       ),
     );
@@ -322,9 +322,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ref.invalidate(profileProvider);
       ref.invalidate(memoriesProvider);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Switched to ${picked.name}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Switched to ${picked.name}')));
       }
     } catch (e) {
       if (mounted) {
@@ -679,9 +679,7 @@ class _PersonaPickerRow extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Icon(
-                  selected
-                      ? Icons.check_circle_rounded
-                      : Icons.circle_outlined,
+                  selected ? Icons.check_circle_rounded : Icons.circle_outlined,
                   size: 22,
                   color: selected ? AppColors.black : AppColors.warmGray,
                 ),

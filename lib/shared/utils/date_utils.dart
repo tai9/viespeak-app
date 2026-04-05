@@ -1,6 +1,6 @@
 import 'package:intl/intl.dart';
 
-final _defaultTimestampFormat = DateFormat('yyyy-MM-dd, HH:mm:ss');
+final _defaultTimestampFormat = DateFormat('yyyy-MM-dd, HH:mm');
 final _zoneSuffixPattern = RegExp(r'[+-]\d{2}:?\d{2}$');
 
 /// Formats an ISO-8601 timestamp string into a human-readable local time.
