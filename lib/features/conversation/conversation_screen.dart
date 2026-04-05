@@ -80,10 +80,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         'duration=${duration}s, transcriptLines=${_transcriptLog.length}',
       );
       _sessionService
-          .endSession(
-            transcript: _transcriptLog,
-            durationSeconds: duration,
-          )
+          .endSession(transcript: _transcriptLog, durationSeconds: duration)
           .then(
             (_) => debugPrint('[Conversation] dispose endSession OK'),
             onError: (e) =>
@@ -417,7 +414,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                           child: Padding(
                             padding: const EdgeInsets.only(top: 4),
                             child: Image.asset(
-                              'assets/icon/app_icon.png',
+                              'assets/images/viespeak_logo.png',
                               width: 48,
                               height: 48,
                             ),
@@ -437,98 +434,99 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                     // height. Allow scrolling as a safety net.
                     physics: const ClampingScrollPhysics(),
                     child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // Logo + welcome text — fades out when active
-                        AnimatedOpacity(
-                          opacity: _active ? 0.0 : 1.0,
-                          duration: const Duration(milliseconds: 400),
-                          child: AnimatedSlide(
-                            offset: _active
-                                ? const Offset(0, -0.3)
-                                : Offset.zero,
-                            duration: const Duration(milliseconds: 500),
-                            curve: Curves.easeInOutCubic,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Image.asset(
-                                  'assets/icon/app_icon.png',
-                                  width: 80,
-                                  height: 80,
-                                ),
-                                const SizedBox(height: 16),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 40,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // Logo + welcome text — fades out when active
+                          AnimatedOpacity(
+                            opacity: _active ? 0.0 : 1.0,
+                            duration: const Duration(milliseconds: 400),
+                            child: AnimatedSlide(
+                              offset: _active
+                                  ? const Offset(0, -0.3)
+                                  : Offset.zero,
+                              duration: const Duration(milliseconds: 500),
+                              curve: Curves.easeInOutCubic,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Image.asset(
+                                    'assets/images/viespeak_logo.png',
+                                    width: 80,
+                                    height: 80,
                                   ),
-                                  child: Text(
-                                    'Hey $_userName,\n$_personaName is ready to chat.',
-                                    style: AppTypography.bodyStandard.copyWith(
-                                      color: AppColors.warmGray,
-                                      fontSize: 18,
+                                  const SizedBox(height: 16),
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 40,
                                     ),
-                                    textAlign: TextAlign.center,
+                                    child: Text(
+                                      'Hey $_userName,\n$_personaName is ready to chat.',
+                                      style: AppTypography.bodyStandard
+                                          .copyWith(
+                                            color: AppColors.warmGray,
+                                            fontSize: 18,
+                                          ),
+                                      textAlign: TextAlign.center,
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 500),
-                          curve: Curves.easeInOutCubic,
-                          height: _active ? 0 : 40,
-                        ),
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 500),
+                            curve: Curves.easeInOutCubic,
+                            height: _active ? 0 : 40,
+                          ),
 
-                        // The orb / start circle
-                        _buildOrb(),
+                          // The orb / start circle
+                          _buildOrb(),
 
-                        // Stop button — fades in when connected
-                        AnimatedOpacity(
-                          opacity: _isConnected ? 1.0 : 0.0,
-                          duration: const Duration(milliseconds: 400),
-                          child: Padding(
-                            padding: const EdgeInsets.only(top: 40),
-                            child: GestureDetector(
-                              onTap: _isConnected ? _endConversation : null,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 20,
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppColors.warmStoneSurface,
-                                  borderRadius: BorderRadius.circular(
-                                    AppRadius.pill,
+                          // Stop button — fades in when connected
+                          AnimatedOpacity(
+                            opacity: _isConnected ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 400),
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 40),
+                              child: GestureDetector(
+                                onTap: _isConnected ? _endConversation : null,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 10,
                                   ),
-                                  boxShadow: AppShadows.warmLift,
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      Icons.stop_rounded,
-                                      size: 18,
-                                      color: AppColors.black,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.warmStoneSurface,
+                                    borderRadius: BorderRadius.circular(
+                                      AppRadius.pill,
                                     ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      'Stop',
-                                      style: AppTypography.button.copyWith(
+                                    boxShadow: AppShadows.warmLift,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(
+                                        Icons.stop_rounded,
+                                        size: 18,
                                         color: AppColors.black,
                                       ),
-                                    ),
-                                  ],
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        'Stop',
+                                        style: AppTypography.button.copyWith(
+                                          color: AppColors.black,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
                   ),
                 ),
               ],
