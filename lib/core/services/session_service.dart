@@ -4,17 +4,20 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
+import '../personas/persona.dart';
 import 'base_auth_service.dart';
 
 class SessionInitResult {
   final String token;
   final int remainingSeconds;
   final String model;
+  final Persona persona;
 
   SessionInitResult({
     required this.token,
     required this.remainingSeconds,
     required this.model,
+    required this.persona,
   });
 }
 
@@ -61,6 +64,7 @@ class SessionService {
       token: body['token'] as String,
       remainingSeconds: body['remaining_seconds'] as int,
       model: body['model'] as String,
+      persona: Persona.fromJson(body['persona'] as Map<String, dynamic>),
     );
   }
 

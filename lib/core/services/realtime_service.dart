@@ -153,7 +153,11 @@ class RealtimeService {
     }
   }
 
-  /// Send session.update to configure audio format and VAD
+  /// Send session.update to configure audio format and VAD.
+  ///
+  /// Voice and instructions are NOT set here — they are baked into the
+  /// ephemeral token server-side when `/session/init` is called. The client
+  /// cannot override them.
   void sendSessionUpdate() {
     if (!_isActive) return;
     _channel?.sink.add(jsonEncode({

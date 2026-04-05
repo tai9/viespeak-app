@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
+import '../personas/persona.dart';
 import 'base_auth_service.dart';
 
 class ApiService {
@@ -19,34 +20,73 @@ class ApiService {
           'Authorization': 'Bearer ${_authService.token}',
       };
 
-  /// GET /api/profile — returns list of profiles (empty if none exists)
+  /// GET /api/profile — unified profile object, or null if the user has
+  /// not created one yet. `profile['persona']` may be null if the stored
+  /// persona_id is unset or points to a removed persona — callers should
+  /// treat that as "onboarding incomplete" and route to the picker.
   Future<Map<String, dynamic>?> getProfile() async {
     final response = await http.get(
       Uri.parse('$_baseUrl/api/profile'),
       headers: _headers,
     );
     if (response.statusCode == 200) {
-      final list = jsonDecode(response.body) as List<dynamic>;
-      if (list.isNotEmpty) {
-        return list.first as Map<String, dynamic>;
-      }
+      return jsonDecode(response.body) as Map<String, dynamic>;
     }
     return null;
   }
 
-  /// POST /api/profile — create or update profile with name and major
+  /// POST /api/profile — create or update profile with name and persona
   Future<void> createProfile({
     required String name,
-    required String major,
+    required String personaId,
   }) async {
     await http.post(
       Uri.parse('$_baseUrl/api/profile'),
       headers: _headers,
       body: jsonEncode({
         'name': name,
-        'major': major,
+        'persona_id': personaId,
       }),
     );
+  }
+
+  /// PUT /api/profile/persona — swap the user's active persona.
+  /// Returns the newly selected persona.
+  Future<Persona> updatePersona(String personaId) async {
+    debugPrint('[ApiService] PUT /api/profile/persona id=$personaId');
+    final response = await http.put(
+      Uri.parse('$_baseUrl/api/profile/persona'),
+      headers: _headers,
+      body: jsonEncode({'persona_id': personaId}),
+    );
+    debugPrint('[ApiService] /api/profile/persona → ${response.statusCode}');
+    if (response.statusCode == 200) {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      return Persona.fromJson(body['persona'] as Map<String, dynamic>);
+    }
+    if (response.statusCode == 400) {
+      throw Exception('Unknown persona');
+    }
+    throw Exception('Failed to update persona: ${response.statusCode}');
+  }
+
+  /// GET /api/personas — catalog of AI companions the user can pick from.
+  /// Rarely changes; cache locally via a Riverpod FutureProvider.
+  Future<List<Persona>> getPersonas() async {
+    debugPrint('[ApiService] GET /api/personas');
+    final response = await http.get(
+      Uri.parse('$_baseUrl/api/personas'),
+      headers: _headers,
+    );
+    debugPrint('[ApiService] /api/personas → ${response.statusCode}');
+    if (response.statusCode == 200) {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final list = body['personas'] as List<dynamic>;
+      return list
+          .map((e) => Persona.fromJson(e as Map<String, dynamic>))
+          .toList();
+    }
+    throw Exception('Failed to load personas: ${response.statusCode}');
   }
 
   /// GET /session/quota — returns remaining quota for today

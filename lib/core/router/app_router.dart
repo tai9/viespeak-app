@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/auth/login_screen.dart';
 import '../../features/conversation/conversation_screen.dart';
-import '../../features/onboarding/major_selection_screen.dart';
+import '../../features/onboarding/persona_selection_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../providers/profile_providers.dart';
 import '../services/base_auth_service.dart';
@@ -48,15 +48,12 @@ GoRouter appRouter(BaseAuthService authService) {
         builder: (context, state) => const _ProfileGate(),
       ),
       GoRoute(
-        path: '/select-major',
-        builder: (context, state) => const MajorSelectionScreen(),
+        path: '/select-persona',
+        builder: (context, state) => const PersonaSelectionScreen(),
       ),
       GoRoute(
         path: '/conversation',
-        builder: (context, state) {
-          final major = state.uri.queryParameters['major'] ?? 'IT';
-          return ConversationScreen(major: major);
-        },
+        builder: (context, state) => const ConversationScreen(),
       ),
       GoRoute(
         path: '/profile',
@@ -66,7 +63,9 @@ GoRouter appRouter(BaseAuthService authService) {
   );
 }
 
-/// Checks if user has a profile, routes to major selection or conversation
+/// Checks whether the user has picked a persona yet and routes accordingly.
+/// A profile with a null `persona` object means onboarding isn't complete
+/// (either never picked, or the stored id points to a removed persona).
 class _ProfileGate extends ConsumerWidget {
   const _ProfileGate();
 
@@ -82,11 +81,14 @@ class _ProfileGate extends ConsumerWidget {
       data: (profile) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!context.mounted) return;
-          if (profile != null) {
-            final major = profile['major'] as String? ?? 'IT';
-            context.go('/conversation?major=$major');
+          // Onboarding is complete iff the profile exists AND carries a
+          // resolved persona object. A null persona means the stored id is
+          // missing or dangling — treat it as incomplete and re-pick.
+          final persona = profile?['persona'] as Map<String, dynamic>?;
+          if (profile != null && persona != null) {
+            context.go('/conversation');
           } else {
-            context.go('/select-major');
+            context.go('/select-persona');
           }
         });
         return const SplashScreen();

@@ -1,3 +1,4 @@
+import '../personas/persona.dart';
 import 'session_service.dart';
 
 class MockSessionService extends SessionService {
@@ -10,6 +11,12 @@ class MockSessionService extends SessionService {
       token: 'mock-ephemeral-token',
       remainingSeconds: 600,
       model: 'gpt-4o-mini-realtime-preview',
+      persona: const Persona(
+        id: 'alex',
+        name: 'Alex',
+        description: 'Senior software engineer from Singapore.',
+        voice: 'alloy',
+      ),
     );
   }
 

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/personas/persona.dart';
 import '../../core/providers/profile_providers.dart';
 import '../../core/providers/providers.dart';
 import '../../core/theme/app_theme.dart';
@@ -112,6 +113,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final quota = quotaAsync.valueOrNull;
     final profileLoading = profile == null && profileAsync.isLoading;
     final quotaLoading = quota == null && quotaAsync.isLoading;
+    final personaName =
+        (profile?['persona'] as Map<String, dynamic>?)?['name'] as String?;
 
     return Column(
       children: [
@@ -145,7 +148,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   child: _buildSectionTitle('Conversation history'),
                 ),
                 const SizedBox(height: 12),
-                _buildMemoriesSection(memoriesAsync),
+                _buildMemoriesSection(memoriesAsync, personaName),
                 const SizedBox(height: 8),
               ],
             ),
@@ -164,6 +167,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Widget _buildMemoriesSection(
     AsyncValue<List<Map<String, dynamic>>> memoriesAsync,
+    String? personaName,
   ) {
     return memoriesAsync.when(
       loading: () => Padding(
@@ -189,11 +193,14 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       ),
       data: (memories) {
         if (memories.isEmpty) {
+          final emptyText = personaName != null
+              ? 'Start your first conversation with $personaName!'
+              : 'No conversations yet. Start talking!';
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 40),
             child: Center(
               child: Text(
-                'No conversations yet. Start talking!',
+                emptyText,
                 style: AppTypography.body.copyWith(color: AppColors.warmGray),
               ),
             ),
@@ -211,9 +218,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
   Widget _buildProfileCard(Map<String, dynamic>? profile) {
     final name = profile?['name'] as String? ?? 'Unknown';
-    final major = profile?['major'] as String? ?? 'Not set';
-    final level = profile?['level'] as String? ?? '—';
-    final persona = major == 'IT' ? 'Alex' : 'Sarah';
+    final persona = profile?['persona'] as Map<String, dynamic>?;
+    final currentFocus = profile?['current_focus'] as String?;
+    final personaId = persona?['id'] as String?;
+    final companion = persona?['name'] as String? ?? 'Not set';
+    final subtitle = (currentFocus != null && currentFocus.isNotEmpty)
+        ? 'Companion: $companion · $currentFocus'
+        : 'Companion: $companion';
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -221,7 +232,12 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         borderRadius: BorderRadius.circular(AppRadius.large),
         boxShadow: AppShadows.outlineRing,
       ),
-      child: Padding(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _openPersonaPicker(currentId: personaId),
+          borderRadius: BorderRadius.circular(AppRadius.large),
+          child: Padding(
         padding: const EdgeInsets.all(20),
         child: Row(
           children: [
@@ -248,7 +264,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   Text(name, style: AppTypography.bodyMedium),
                   const SizedBox(height: 4),
                   Text(
-                    '$major · Level $level · Companion: $persona',
+                    subtitle,
                     style: AppTypography.caption.copyWith(
                       color: AppColors.darkGray,
                     ),
@@ -256,10 +272,67 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                 ],
               ),
             ),
+            const Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 16,
+              color: AppColors.warmGray,
+            ),
           ],
         ),
       ),
+        ),
+      ),
     );
+  }
+
+  Future<void> _openPersonaPicker({required String? currentId}) async {
+    // Block mid-call switches. The backend re-reads the persona at
+    // SessionEnd, so a switch mid-session would attribute the resulting
+    // memory to the new persona — not what the user expects. The call
+    // screen also caches `sessionInit.persona` for its UI copy, which
+    // would go stale. Safer to make them finish the current conversation.
+    if (ref.read(realtimeServiceProvider).isConnected) {
+      HapticFeedback.lightImpact();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Finish your current conversation before switching.'),
+        ),
+      );
+      return;
+    }
+
+    HapticFeedback.selectionClick();
+    final picked = await showModalBottomSheet<Persona>(
+      context: context,
+      backgroundColor: AppColors.white,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _PersonaPickerSheet(currentId: currentId),
+    );
+    if (picked == null || picked.id == currentId) return;
+    try {
+      final api = ref.read(apiServiceProvider);
+      await api.updatePersona(picked.id);
+      // Memories are now persona-scoped server-side. Drop the cached list
+      // so the history section reflects the new persona (usually empty on
+      // first switch, which the empty state copy calls out).
+      ref.invalidate(profileProvider);
+      ref.invalidate(memoriesProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Switched to ${picked.name}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
+      }
+    }
   }
 
   Widget _buildQuotaCard(Map<String, dynamic>? quota) {
@@ -474,6 +547,149 @@ class _SkeletonCardState extends State<_SkeletonCard>
           ),
         );
       },
+    );
+  }
+}
+
+/// Bottom-sheet list of personas. Pops with the selected [Persona] on tap,
+/// or `null` if the user dismisses the sheet.
+class _PersonaPickerSheet extends ConsumerWidget {
+  final String? currentId;
+
+  const _PersonaPickerSheet({required this.currentId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final personasAsync = ref.watch(personasProvider);
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Switch companion', style: AppTypography.sectionHeading),
+            const SizedBox(height: 16),
+            personasAsync.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.symmetric(vertical: 40),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+              error: (error, _) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 24),
+                child: Column(
+                  children: [
+                    Text(
+                      friendlyError(error),
+                      style: AppTypography.body.copyWith(
+                        color: AppColors.warmGray,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => ref.invalidate(personasProvider),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
+              data: (personas) => Column(
+                children: [
+                  for (final p in personas) ...[
+                    _PersonaPickerRow(
+                      persona: p,
+                      selected: p.id == currentId,
+                      onTap: () => Navigator.of(context).pop(p),
+                    ),
+                    if (p != personas.last) const SizedBox(height: 12),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PersonaPickerRow extends StatelessWidget {
+  final Persona persona;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _PersonaPickerRow({
+    required this.persona,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.large),
+        boxShadow: AppShadows.outlineRing,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppRadius.large),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: AppColors.warmStoneSurface,
+                    borderRadius: BorderRadius.circular(AppRadius.comfortable),
+                    boxShadow: AppShadows.warmLift,
+                  ),
+                  child: Center(
+                    child: Text(
+                      persona.name.isNotEmpty
+                          ? persona.name[0].toUpperCase()
+                          : '?',
+                      style: AppTypography.bodyMedium,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(persona.name, style: AppTypography.bodyMedium),
+                      const SizedBox(height: 4),
+                      Text(
+                        persona.description,
+                        style: AppTypography.caption.copyWith(
+                          color: AppColors.darkGray,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Icon(
+                  selected
+                      ? Icons.check_circle_rounded
+                      : Icons.circle_outlined,
+                  size: 22,
+                  color: selected ? AppColors.black : AppColors.warmGray,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

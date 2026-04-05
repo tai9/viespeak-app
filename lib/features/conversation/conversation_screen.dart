@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../../core/personas/persona.dart';
 import '../../core/providers/profile_providers.dart';
 import '../../core/providers/providers.dart';
 import '../../core/services/audio_service.dart';
@@ -18,9 +19,7 @@ import 'transcript_widget.dart';
 import 'voice_orb_widget.dart';
 
 class ConversationScreen extends ConsumerStatefulWidget {
-  final String major;
-
-  const ConversationScreen({super.key, required this.major});
+  const ConversationScreen({super.key});
 
   @override
   ConsumerState<ConversationScreen> createState() => _ConversationScreenState();
@@ -49,7 +48,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   // Collect transcript for endSession call
   final _transcriptLog = <Map<String, String>>[];
 
-  String get _personaName => widget.major == 'IT' ? 'Alex' : 'Sarah';
+  // Populated once /session/init returns — the backend owns persona selection,
+  // so until we hit the API on _startConversation we don't know who the user
+  // will be talking to. Pre-session UI falls back to a generic welcome.
+  Persona? _persona;
+  String? get _personaName => _persona?.name;
   String get _userName => ref.read(authServiceProvider).userName;
 
   @override
@@ -164,6 +167,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       }
 
       _secondsRemaining = sessionInit.remainingSeconds;
+      if (mounted) {
+        setState(() => _persona = sessionInit.persona);
+      }
 
       // 2. Fetch memories for context hint
       try {
@@ -461,7 +467,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                                       horizontal: 40,
                                     ),
                                     child: Text(
-                                      'Hey $_userName,\n$_personaName is ready to chat.',
+                                      _personaName != null
+                                          ? 'Hey $_userName,\n$_personaName is ready to chat.'
+                                          : 'Hey $_userName,\nready when you are.',
                                       style: AppTypography.bodyStandard
                                           .copyWith(
                                             color: AppColors.warmGray,
@@ -675,8 +683,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               const SizedBox(height: 12),
               Text(
                 _quotaResetAt.isNotEmpty
-                    ? 'Come back after ${_quotaResetAt.substring(0, 16).replaceAll('T', ' ')} to chat with $_personaName again!'
-                    : 'Come back tomorrow to chat with $_personaName again!',
+                    ? 'Come back after ${_quotaResetAt.substring(0, 16).replaceAll('T', ' ')} to chat again!'
+                    : 'Come back tomorrow to chat again!',
                 style: AppTypography.bodyStandard.copyWith(
                   color: AppColors.warmGray,
                 ),
