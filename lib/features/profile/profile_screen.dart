@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/providers/profile_providers.dart';
 import '../../core/providers/providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../shared/utils/date_utils.dart';
 import '../../shared/utils/error_utils.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
@@ -43,9 +44,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _signingOut = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(friendlyError(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
       }
     }
   }
@@ -201,9 +202,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
-            children: [
-              for (final memory in memories) _buildMemoryCard(memory),
-            ],
+            children: [for (final memory in memories) _buildMemoryCard(memory)],
           ),
         );
       },
@@ -250,7 +249,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   const SizedBox(height: 4),
                   Text(
                     '$major · Level $level · Companion: $persona',
-                    style: AppTypography.caption.copyWith(color: AppColors.darkGray),
+                    style: AppTypography.caption.copyWith(
+                      color: AppColors.darkGray,
+                    ),
                   ),
                 ],
               ),
@@ -273,7 +274,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final progress = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0.0;
     final minutes = remainingSeconds ~/ 60;
     final seconds = remainingSeconds % 60;
-    final timeText = '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    final timeText =
+        '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
     final isLow = remainingSeconds < 60;
 
     return DecoratedBox(
@@ -332,7 +334,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final summary = memory['summary'] as String? ?? '';
     final followup = memory['pending_followup'] as String?;
     final createdAt = memory['created_at'] as String? ?? '';
-    final date = createdAt.isNotEmpty ? createdAt.substring(0, 10) : '';
+    final date = formatTimestamp(createdAt);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -352,7 +354,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Text(
                     date,
-                    style: AppTypography.micro.copyWith(color: AppColors.warmGray),
+                    style: AppTypography.micro.copyWith(
+                      color: AppColors.warmGray,
+                    ),
                   ),
                 ),
               Text(summary, style: AppTypography.bodyStandard),
@@ -400,7 +404,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     )
                   : Text(
                       'Sign out',
-                      style: AppTypography.button.copyWith(color: AppColors.black),
+                      style: AppTypography.button.copyWith(
+                        color: AppColors.black,
+                      ),
                     ),
             ),
           ),
