@@ -69,6 +69,28 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _sessionTimer?.cancel();
     _cancelSubscriptions();
     _controller.state.removeListener(_onStateChanged);
+    // If the user navigates away mid-session (back button, route pop) the
+    // Stop button's _endConversation never runs. Fire the session end here
+    // so the backend can still persist the transcript as a memory and
+    // deduct quota. Fire-and-forget since dispose can't await.
+    if (_sessionStartTime != null) {
+      final duration = DateTime.now().difference(_sessionStartTime!).inSeconds;
+      debugPrint(
+        '[Conversation] dispose: fire-and-forget endSession '
+        'duration=${duration}s, transcriptLines=${_transcriptLog.length}',
+      );
+      _sessionService
+          .endSession(
+            transcript: _transcriptLog,
+            durationSeconds: duration,
+          )
+          .then(
+            (_) => debugPrint('[Conversation] dispose endSession OK'),
+            onError: (e) =>
+                debugPrint('[Conversation] dispose endSession failed: $e'),
+          );
+      _sessionStartTime = null;
+    }
     _controller.stop();
     _controller.dispose();
     _audioService.dispose();
@@ -209,7 +231,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             }
           });
           _currentAITranscript = StringBuffer();
-          _transcriptLog.add({'role': 'assistant', 'text': transcript});
+          _transcriptLog.add({'role': 'assistant', 'content': transcript});
           _addFloatingTranscript(transcript, false);
           HapticFeedback.lightImpact();
         }),
@@ -224,7 +246,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               ),
             );
           });
-          _transcriptLog.add({'role': 'user', 'text': transcript});
+          _transcriptLog.add({'role': 'user', 'content': transcript});
           _addFloatingTranscript(transcript, true);
           HapticFeedback.lightImpact();
         }),
@@ -270,20 +292,34 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     await _controller.stop();
     setState(() => _isConnected = false);
 
-    // Send transcript + duration to backend
-    if (_sessionStartTime != null && _transcriptLog.isNotEmpty) {
+    // Send duration to backend so quota is deducted — always call this once
+    // the session started, even if no transcript was captured. The transcript
+    // guard used to skip the call when the user ended before speaking, which
+    // left the backend quota untouched.
+    if (_sessionStartTime != null) {
       final duration = DateTime.now().difference(_sessionStartTime!).inSeconds;
+      debugPrint(
+        '[Conversation] _endConversation: flushing session '
+        'duration=${duration}s, transcriptLines=${_transcriptLog.length}',
+      );
       try {
         await _sessionService.endSession(
           transcript: _transcriptLog,
           durationSeconds: duration,
         );
-      } catch (_) {
-        // Non-critical — don't block UI
+        debugPrint('[Conversation] endSession completed OK');
+      } catch (e) {
+        debugPrint('[Conversation] endSession threw: $e');
       }
+      _sessionStartTime = null;
+    } else {
+      debugPrint(
+        '[Conversation] _endConversation: no _sessionStartTime, skipping',
+      );
     }
 
     // Refresh cached quota + memories so profile screen shows fresh data
+    debugPrint('[Conversation] invalidating quotaProvider + memoriesProvider');
     ref.invalidate(quotaProvider);
     ref.invalidate(memoriesProvider);
   }
@@ -394,7 +430,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
                 // Center area — orb + stop button
                 Expanded(
-                  child: Center(
+                  child: SingleChildScrollView(
+                    // Welcome text, orb, and stop button are all laid out
+                    // together (AnimatedOpacity keeps them in the tree), so
+                    // on short viewports the column can exceed available
+                    // height. Allow scrolling as a safety net.
+                    physics: const ClampingScrollPhysics(),
+                    child: Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -486,6 +528,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                         ),
                       ],
                     ),
+                  ),
                   ),
                 ),
               ],

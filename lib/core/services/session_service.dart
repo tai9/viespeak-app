@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
@@ -68,13 +69,30 @@ class SessionService {
     required List<Map<String, String>> transcript,
     required int durationSeconds,
   }) async {
-    await http.post(
-      Uri.parse('$_baseUrl/session/end'),
-      headers: _headers,
-      body: jsonEncode({
-        'transcript': transcript,
-        'duration_seconds': durationSeconds,
-      }),
+    final url = '$_baseUrl/session/end';
+    final body = jsonEncode({
+      'transcript': transcript,
+      'duration_seconds': durationSeconds,
+    });
+    debugPrint(
+      '[SessionService] POST $url '
+      'transcript=${transcript.length} items, duration=${durationSeconds}s',
     );
+    debugPrint('[SessionService] request body: $body');
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: _headers,
+        body: body,
+      );
+      debugPrint(
+        '[SessionService] /session/end → ${response.statusCode} '
+        'body=${response.body}',
+      );
+    } catch (e, st) {
+      debugPrint('[SessionService] /session/end FAILED: $e');
+      debugPrint('$st');
+      rethrow;
+    }
   }
 }

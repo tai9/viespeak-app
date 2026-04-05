@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
@@ -50,9 +51,14 @@ class ApiService {
 
   /// GET /session/quota — returns remaining quota for today
   Future<Map<String, dynamic>?> getQuota() async {
+    debugPrint('[ApiService] GET /session/quota');
     final response = await http.get(
       Uri.parse('$_baseUrl/session/quota'),
       headers: _headers,
+    );
+    debugPrint(
+      '[ApiService] /session/quota → ${response.statusCode} '
+      'body=${response.body}',
     );
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
@@ -62,12 +68,18 @@ class ApiService {
 
   /// GET /api/memories — returns list of memory entries
   Future<List<Map<String, dynamic>>> getMemories() async {
+    debugPrint('[ApiService] GET /api/memories');
     final response = await http.get(
       Uri.parse('$_baseUrl/api/memories'),
       headers: _headers,
     );
+    debugPrint(
+      '[ApiService] /api/memories → ${response.statusCode} '
+      '(${response.body.length} bytes)',
+    );
     if (response.statusCode == 200) {
       final list = jsonDecode(response.body) as List<dynamic>;
+      debugPrint('[ApiService] memories parsed: ${list.length} entries');
       return list.cast<Map<String, dynamic>>();
     }
     return [];

@@ -18,6 +18,20 @@ class ProfileScreen extends ConsumerStatefulWidget {
 class _ProfileScreenState extends ConsumerState<ProfileScreen> {
   bool _signingOut = false;
 
+  Future<void> _handleRefresh() async {
+    HapticFeedback.selectionClick();
+    ref.invalidate(profileProvider);
+    ref.invalidate(quotaProvider);
+    ref.invalidate(memoriesProvider);
+    // Wait for all three to finish so the spinner stays visible until the
+    // new data is actually on screen.
+    await Future.wait([
+      ref.read(profileProvider.future),
+      ref.read(quotaProvider.future),
+      ref.read(memoriesProvider.future),
+    ]);
+  }
+
   Future<void> _handleSignOut() async {
     HapticFeedback.lightImpact();
     setState(() => _signingOut = true);
@@ -71,13 +85,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     AsyncValue<Map<String, dynamic>?> quotaAsync,
     AsyncValue<List<Map<String, dynamic>>> memoriesAsync,
   ) {
-    // Show loading if profile is still loading
-    if (profileAsync.isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    // Show error if profile failed
-    if (profileAsync.hasError) {
+    // Error state still blocks the whole screen — nothing useful to show.
+    if (profileAsync.hasError && !profileAsync.isLoading) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -96,48 +105,49 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       );
     }
 
-    final profile = profileAsync.value;
+    // Use cached values while loading so we render the real layout with
+    // skeleton placeholders instead of a jarring full-screen spinner.
+    final profile = profileAsync.valueOrNull;
     final quota = quotaAsync.valueOrNull;
+    final profileLoading = profile == null && profileAsync.isLoading;
+    final quotaLoading = quota == null && quotaAsync.isLoading;
 
     return Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-          child: _buildProfileCard(profile),
-        ),
-        const SizedBox(height: 16),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _buildQuotaCard(quota),
-        ),
-        const SizedBox(height: 24),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: _buildSectionTitle('Conversation history'),
-        ),
-        const SizedBox(height: 12),
         Expanded(
-          child: memoriesAsync.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (error, _) => Center(
-              child: Text(
-                'Failed to load history',
-                style: AppTypography.body.copyWith(color: AppColors.warmGray),
-              ),
+          child: RefreshIndicator(
+            onRefresh: _handleRefresh,
+            color: AppColors.black,
+            backgroundColor: AppColors.white,
+            child: ListView(
+              // AlwaysScrollable so the pull gesture works even when the
+              // content fits the viewport (e.g. empty history).
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.zero,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                  child: profileLoading
+                      ? const _SkeletonCard(height: 96)
+                      : _buildProfileCard(profile),
+                ),
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: quotaLoading
+                      ? const _SkeletonCard(height: 110)
+                      : _buildQuotaCard(quota),
+                ),
+                const SizedBox(height: 24),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: _buildSectionTitle('Conversation history'),
+                ),
+                const SizedBox(height: 12),
+                _buildMemoriesSection(memoriesAsync),
+                const SizedBox(height: 8),
+              ],
             ),
-            data: (memories) => memories.isEmpty
-                ? Center(
-                    child: Text(
-                      'No conversations yet. Start talking!',
-                      style: AppTypography.body.copyWith(color: AppColors.warmGray),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    itemCount: memories.length,
-                    itemBuilder: (context, index) =>
-                        _buildMemoryCard(memories[index]),
-                  ),
           ),
         ),
         Padding(
@@ -148,6 +158,55 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         _buildAppVersion(),
         const SizedBox(height: 24),
       ],
+    );
+  }
+
+  Widget _buildMemoriesSection(
+    AsyncValue<List<Map<String, dynamic>>> memoriesAsync,
+  ) {
+    return memoriesAsync.when(
+      loading: () => Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: Column(
+          children: const [
+            _SkeletonCard(height: 80),
+            SizedBox(height: 12),
+            _SkeletonCard(height: 80),
+            SizedBox(height: 12),
+            _SkeletonCard(height: 80),
+          ],
+        ),
+      ),
+      error: (error, _) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 40),
+        child: Center(
+          child: Text(
+            'Failed to load history',
+            style: AppTypography.body.copyWith(color: AppColors.warmGray),
+          ),
+        ),
+      ),
+      data: (memories) {
+        if (memories.isEmpty) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 40),
+            child: Center(
+              child: Text(
+                'No conversations yet. Start talking!',
+                style: AppTypography.body.copyWith(color: AppColors.warmGray),
+              ),
+            ),
+          );
+        }
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            children: [
+              for (final memory in memories) _buildMemoryCard(memory),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -356,6 +415,59 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         'VieSpeak v1.0.0',
         style: AppTypography.micro.copyWith(color: AppColors.warmGray),
       ),
+    );
+  }
+}
+
+/// Subtle pulsing placeholder that matches the real card dimensions so the
+/// layout doesn't shift when data arrives.
+class _SkeletonCard extends StatefulWidget {
+  final double height;
+
+  const _SkeletonCard({required this.height});
+
+  @override
+  State<_SkeletonCard> createState() => _SkeletonCardState();
+}
+
+class _SkeletonCardState extends State<_SkeletonCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1100),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (_, _) {
+        final t = _controller.value;
+        return Container(
+          height: widget.height,
+          decoration: BoxDecoration(
+            color: Color.lerp(
+              AppColors.warmStoneSurface,
+              AppColors.nearWhite,
+              t,
+            ),
+            borderRadius: BorderRadius.circular(AppRadius.large),
+            boxShadow: AppShadows.outlineRing,
+          ),
+        );
+      },
     );
   }
 }
