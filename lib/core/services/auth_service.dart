@@ -28,6 +28,9 @@ class AuthService extends BaseAuthService {
   bool get isSignedIn => session != null;
 
   @override
+  String? get userId => user?.id;
+
+  @override
   String get userName {
     final meta = user?.userMetadata;
     final fullName = meta?['full_name'] as String? ??

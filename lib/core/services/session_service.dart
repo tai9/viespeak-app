@@ -21,13 +21,32 @@ class SessionInitResult {
   });
 }
 
+/// Why the backend refused a `/session/init`. The API returns two distinct
+/// 403 error codes and the FE shows different copy for each.
+enum QuotaExceededReason {
+  /// `daily_quota_exceeded` — user has burned through their daily seconds.
+  minutesExhausted,
+
+  /// `daily_session_limit_exceeded` — user hit `max_sessions` for today.
+  sessionsExhausted,
+}
+
 class QuotaExceededException implements Exception {
   final String resetAt;
+  final QuotaExceededReason reason;
 
-  QuotaExceededException(this.resetAt);
+  QuotaExceededException(this.resetAt, this.reason);
 
   @override
-  String toString() => 'Daily quota exceeded. Resets at $resetAt';
+  String toString() =>
+      'Quota exceeded (${reason.name}). Resets at $resetAt';
+}
+
+/// Thrown when `/session/init` returns 400 because the user has no profile
+/// row yet. Callers should route to onboarding.
+class ProfileNotFoundException implements Exception {
+  @override
+  String toString() => 'User profile not found — complete onboarding first.';
 }
 
 class SessionService {
@@ -45,14 +64,29 @@ class SessionService {
 
   /// GET /session/init — get ephemeral token for OpenAI Realtime API
   Future<SessionInitResult> getSessionInit() async {
+    debugPrint('[SessionService] GET /session/init');
     final response = await http.get(
       Uri.parse('$_baseUrl/session/init'),
       headers: _headers,
     );
+    debugPrint('[SessionService] /session/init → ${response.statusCode}');
+
+    if (response.statusCode == 400) {
+      // Backend returns this when the user has no profile row. Route to
+      // onboarding instead of showing a generic error.
+      throw ProfileNotFoundException();
+    }
 
     if (response.statusCode == 403) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
-      throw QuotaExceededException(body['reset_at'] as String? ?? '');
+      final code = body['error'] as String? ?? '';
+      final reason = code == 'daily_session_limit_exceeded'
+          ? QuotaExceededReason.sessionsExhausted
+          : QuotaExceededReason.minutesExhausted;
+      throw QuotaExceededException(
+        body['reset_at'] as String? ?? '',
+        reason,
+      );
     }
 
     if (response.statusCode != 200) {

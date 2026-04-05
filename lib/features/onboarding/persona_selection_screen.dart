@@ -28,8 +28,13 @@ class _PersonaSelectionScreenState
     try {
       final auth = ref.read(authServiceProvider);
       final api = ref.read(apiServiceProvider);
+      // POST /api/profile returns the enriched profile — no refetch needed.
       await api.createProfile(name: auth.userName, personaId: persona.id);
       if (mounted) {
+        // Still invalidate so any widget listening to profileProvider sees
+        // the new state. The next read hits the cache-bust and fetches
+        // GET /api/profile once, which is cheap compared to the fix of
+        // wiring a notifier-style provider through the whole tree.
         ref.invalidate(profileProvider);
         context.go('/conversation');
       }

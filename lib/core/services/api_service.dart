@@ -21,26 +21,38 @@ class ApiService {
       };
 
   /// GET /api/profile — unified profile object, or null if the user has
-  /// not created one yet. `profile['persona']` may be null if the stored
-  /// persona_id is unset or points to a removed persona — callers should
-  /// treat that as "onboarding incomplete" and route to the picker.
+  /// not created one yet (backend returns 404 → route to onboarding).
+  /// `profile['persona']` may be null if the stored persona_id is unset
+  /// or points to a removed persona — callers should also treat that as
+  /// "onboarding incomplete" and route to the picker.
+  ///
+  /// Throws on 5xx / network errors so Riverpod can surface a retry UI
+  /// instead of silently pretending onboarding is incomplete.
   Future<Map<String, dynamic>?> getProfile() async {
+    debugPrint('[ApiService] GET /api/profile');
     final response = await http.get(
       Uri.parse('$_baseUrl/api/profile'),
       headers: _headers,
     );
+    debugPrint('[ApiService] /api/profile → ${response.statusCode}');
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
-    return null;
+    if (response.statusCode == 404) {
+      return null;
+    }
+    throw Exception('Failed to load profile: ${response.statusCode}');
   }
 
-  /// POST /api/profile — create or update profile with name and persona
-  Future<void> createProfile({
+  /// POST /api/profile — create or update profile with name and persona.
+  /// Returns the enriched profile (same shape as GET /api/profile), so
+  /// callers don't need to refetch.
+  Future<Map<String, dynamic>> createProfile({
     required String name,
     required String personaId,
   }) async {
-    await http.post(
+    debugPrint('[ApiService] POST /api/profile personaId=$personaId');
+    final response = await http.post(
       Uri.parse('$_baseUrl/api/profile'),
       headers: _headers,
       body: jsonEncode({
@@ -48,6 +60,15 @@ class ApiService {
         'persona_id': personaId,
       }),
     );
+    debugPrint('[ApiService] /api/profile → ${response.statusCode}');
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    }
+    if (response.statusCode == 400) {
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(body['error'] as String? ?? 'Invalid request');
+    }
+    throw Exception('Failed to save profile: ${response.statusCode}');
   }
 
   /// PUT /api/profile/persona — swap the user's active persona.
@@ -65,7 +86,8 @@ class ApiService {
       return Persona.fromJson(body['persona'] as Map<String, dynamic>);
     }
     if (response.statusCode == 400) {
-      throw Exception('Unknown persona');
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(body['error'] as String? ?? 'Invalid persona');
     }
     throw Exception('Failed to update persona: ${response.statusCode}');
   }

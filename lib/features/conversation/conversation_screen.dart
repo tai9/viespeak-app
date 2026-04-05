@@ -41,6 +41,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _isConnecting = false;
   bool _quotaExceeded = false;
   String _quotaResetAt = '';
+  QuotaExceededReason _quotaReason = QuotaExceededReason.minutesExhausted;
   Timer? _sessionTimer;
   int _secondsRemaining = 0;
   DateTime? _sessionStartTime;
@@ -52,10 +53,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   final _transcriptLog = <Map<String, String>>[];
 
   // Populated once /session/init returns — the backend owns persona selection,
-  // so until we hit the API on _startConversation we don't know who the user
-  // will be talking to. Pre-session UI falls back to a generic welcome.
+  // and /session/init returns the authoritative persona (which may differ
+  // from the profile's stored id if the server fell back to a default).
+  // Before the session starts we surface the profile's persona so the user
+  // sees who they're about to talk to on the idle welcome screen.
   Persona? _persona;
-  String? get _personaName => _persona?.name;
+  String? get _personaName {
+    if (_persona != null) return _persona!.name;
+    final profile = ref.watch(profileProvider).valueOrNull;
+    final persona = profile?['persona'] as Map<String, dynamic>?;
+    return persona?['name'] as String?;
+  }
+
   String get _userName => ref.read(authServiceProvider).userName;
 
   @override
@@ -165,7 +174,17 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           _isConnecting = false;
           _quotaExceeded = true;
           _quotaResetAt = e.resetAt;
+          _quotaReason = e.reason;
         });
+        // Refresh cached quota so the profile screen reflects the true
+        // state the backend just told us about.
+        ref.invalidate(quotaProvider);
+        return;
+      } on ProfileNotFoundException {
+        // Backend has no profile row for this user — send them through
+        // onboarding instead of surfacing a generic error.
+        setState(() => _isConnecting = false);
+        if (mounted) context.go('/select-persona');
         return;
       }
 
@@ -613,11 +632,19 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         if (!_isConnected && !_isConnecting) {
           // Cached quota already exhausted — flip straight to the exhausted
           // view without hitting the backend.
-          if (isQuotaExhausted(ref.read(quotaProvider).valueOrNull)) {
+          final cachedQuota = ref.read(quotaProvider).valueOrNull;
+          if (isQuotaExhausted(cachedQuota)) {
             HapticFeedback.lightImpact();
             setState(() {
               _quotaExceeded = true;
               _quotaResetAt = '';
+              // Pick the reason from the cached payload so the headline
+              // matches reality. If both are exhausted, minutes wins
+              // (more informative to the user).
+              final remaining = cachedQuota?['remaining_seconds'];
+              _quotaReason = (remaining is int && remaining <= 0)
+                  ? QuotaExceededReason.minutesExhausted
+                  : QuotaExceededReason.sessionsExhausted;
             });
             return;
           }
@@ -701,6 +728,19 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     return 'Come back after $formatted to chat again!';
   }
 
+  /// Headline copy for the quota-exceeded view, picked from the 403 error
+  /// code returned by `/session/init`. When we're showing this view from a
+  /// locally-detected exhausted quota (cached `/session/quota`), we use
+  /// the reason that the cached payload implies — handled by the caller.
+  String _quotaHeadline() {
+    switch (_quotaReason) {
+      case QuotaExceededReason.sessionsExhausted:
+        return "You've used all your sessions for today.";
+      case QuotaExceededReason.minutesExhausted:
+        return "You've used all your time for today.";
+    }
+  }
+
   Widget _buildQuotaExceededView() {
     return Scaffold(
       backgroundColor: AppColors.white,
@@ -732,7 +772,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
               ),
               const SizedBox(height: 24),
               Text(
-                'You\'ve used all your time for today.',
+                _quotaHeadline(),
                 style: AppTypography.sectionHeading,
                 textAlign: TextAlign.center,
               ),

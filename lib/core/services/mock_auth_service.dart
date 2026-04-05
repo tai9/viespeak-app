@@ -10,6 +10,9 @@ class MockAuthService extends BaseAuthService {
   bool get isSignedIn => _isSignedIn;
 
   @override
+  String? get userId => _isSignedIn ? 'mock-user-id' : null;
+
+  @override
   String get userName => _isSignedIn ? 'Minh' : 'there';
 
   @override

@@ -21,11 +21,27 @@ class MockApiService extends ApiService {
   }
 
   @override
-  Future<void> createProfile({
+  Future<Map<String, dynamic>> createProfile({
     required String name,
     required String personaId,
   }) async {
     await Future.delayed(const Duration(milliseconds: 300));
+    final personas = await getPersonas();
+    final persona = personas.firstWhere(
+      (p) => p.id == personaId,
+      orElse: () => throw Exception('unknown persona_id'),
+    );
+    return {
+      'id': 'mock-profile-id',
+      'name': name,
+      'current_focus': '',
+      'persona': {
+        'id': persona.id,
+        'name': persona.name,
+        'description': persona.description,
+        'voice': persona.voice,
+      },
+    };
   }
 
   @override
@@ -76,8 +92,10 @@ class MockApiService extends ApiService {
     return [
       {
         'id': 'mock-memory-id',
+        'user_id': 'mock-user-id',
+        'persona_id': 'alex',
+        'session_id': 'mock-session-id',
         'summary': 'Talked about preparing for a software engineering internship at FPT.',
-        'facts': {'goal': 'internship at FPT', 'project': 'graduation thesis on microservices'},
         'pending_followup': 'How did the mock interview go?',
         'created_at': '2026-04-04T00:00:00Z',
       },
