@@ -221,6 +221,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       await _controller.start(
         token: sessionInit.token,
         model: sessionInit.model,
+        userName: _userName,
       );
 
       // 4. Listen to realtime transcript events (UI-only concerns)

@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../config/env.dart';
 import '../personas/persona.dart';
+import 'api_service.dart';
 import 'base_auth_service.dart';
 
 class SessionInitResult {
@@ -70,6 +71,12 @@ class SessionService {
       headers: _headers,
     );
     debugPrint('[SessionService] /session/init → ${response.statusCode}');
+
+    if (response.statusCode == 401) {
+      debugPrint('[SessionService] 401 Unauthorized — signing out');
+      _authService.signOut();
+      throw SessionExpiredException();
+    }
 
     if (response.statusCode == 400) {
       // Backend returns this when the user has no profile row. Route to

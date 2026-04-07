@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -14,6 +15,7 @@ class AuthService extends BaseAuthService {
 
   AuthService() {
     _authSubscription = _supabase.auth.onAuthStateChange.listen((data) {
+      debugPrint('[AuthService] onAuthStateChange: ${data.event}');
       notifyListeners();
     });
   }

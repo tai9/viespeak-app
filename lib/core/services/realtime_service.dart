@@ -214,6 +214,22 @@ class RealtimeService {
     });
   }
 
+  /// Ask the model to speak proactively with a per-response instruction
+  /// override. Session-level instructions (persona, voice) remain in effect —
+  /// this only adds a turn-level directive. No-op if a response is already
+  /// active, to avoid "conversation_already_has_active_response" errors.
+  void sendProactiveResponse(String instructions) {
+    if (!_isActive || _hasActiveResponse) return;
+    _hasActiveResponse = true;
+    _channel?.sink.add(jsonEncode({
+      'type': 'response.create',
+      'response': {
+        'modalities': ['audio', 'text'],
+        'instructions': instructions,
+      },
+    }));
+  }
+
   /// Cancel current AI response (on user interruption).
   /// No-op if there is no in-progress response — otherwise OpenAI returns
   /// "Cancellation failed: no active response".

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -18,6 +19,7 @@ Future<void> main() async {
   await dotenv.load(fileName: '.env');
 
   final isDev = Env.devMode;
+  debugPrint('[VieSpeak] API_BASE_URL=${Env.apiBaseUrl}');
 
   await Supabase.initialize(
     url: Env.supabaseUrl,

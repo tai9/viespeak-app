@@ -7,6 +7,13 @@ import '../config/env.dart';
 import '../personas/persona.dart';
 import 'base_auth_service.dart';
 
+/// Thrown when any API call receives a 401 Unauthorized response,
+/// indicating the session has expired.
+class SessionExpiredException implements Exception {
+  @override
+  String toString() => 'Session expired — please sign in again.';
+}
+
 class ApiService {
   final BaseAuthService _authService;
 
@@ -19,6 +26,15 @@ class ApiService {
         if (_authService.token != null)
           'Authorization': 'Bearer ${_authService.token}',
       };
+
+  /// Check for 401 and sign the user out automatically.
+  void _checkUnauthorized(http.Response response) {
+    if (response.statusCode == 401) {
+      debugPrint('[ApiService] 401 Unauthorized — signing out');
+      _authService.signOut();
+      throw SessionExpiredException();
+    }
+  }
 
   /// GET /api/profile — unified profile object, or null if the user has
   /// not created one yet (backend returns 404 → route to onboarding).
@@ -35,6 +51,7 @@ class ApiService {
       headers: _headers,
     );
     debugPrint('[ApiService] /api/profile → ${response.statusCode}');
+    _checkUnauthorized(response);
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
@@ -61,6 +78,7 @@ class ApiService {
       }),
     );
     debugPrint('[ApiService] /api/profile → ${response.statusCode}');
+    _checkUnauthorized(response);
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
@@ -81,6 +99,7 @@ class ApiService {
       body: jsonEncode({'persona_id': personaId}),
     );
     debugPrint('[ApiService] /api/profile/persona → ${response.statusCode}');
+    _checkUnauthorized(response);
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       return Persona.fromJson(body['persona'] as Map<String, dynamic>);
@@ -101,6 +120,7 @@ class ApiService {
       headers: _headers,
     );
     debugPrint('[ApiService] /api/personas → ${response.statusCode}');
+    _checkUnauthorized(response);
     if (response.statusCode == 200) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final list = body['personas'] as List<dynamic>;
@@ -122,6 +142,7 @@ class ApiService {
       '[ApiService] /session/quota → ${response.statusCode} '
       'body=${response.body}',
     );
+    _checkUnauthorized(response);
     if (response.statusCode == 200) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
@@ -139,6 +160,7 @@ class ApiService {
       '[ApiService] /api/memories → ${response.statusCode} '
       '(${response.body.length} bytes)',
     );
+    _checkUnauthorized(response);
     if (response.statusCode == 200) {
       final list = jsonDecode(response.body) as List<dynamic>;
       debugPrint('[ApiService] memories parsed: ${list.length} entries');
