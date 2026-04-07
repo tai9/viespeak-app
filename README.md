@@ -5,7 +5,7 @@ AI voice companion app that helps Vietnamese university students practice Englis
 ## Tech Stack
 
 - **Mobile:** Flutter (iOS + Android)
-- **Backend:** Golang (separate repo)
+- **Backend:** NestJS (separate repo)
 - **Voice:** OpenAI Realtime API (Speech-to-Speech)
 
 ## Setup
@@ -18,7 +18,7 @@ AI voice companion app that helps Vietnamese university students practice Englis
 ### Environment Variables
 
 ```
-API_BASE_URL=          # Golang backend REST API
+API_BASE_URL=          # NestJS backend REST API
 SUPABASE_URL=          # Supabase project URL
 SUPABASE_ANON_KEY=     # Supabase anonymous key
 DEV_MODE=false         # true = mock services, no backend needed
