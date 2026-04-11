@@ -372,6 +372,11 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       onError: (error) {
         debugPrint('[TTS-STT] error: ${error.errorMsg}');
         if (!_sttActive) return;
+        // error_no_match is a NORMAL event — it just means the listen
+        // window ended without recognizing anything. The 'done' status
+        // handler below will schedule the restart; don't double-schedule
+        // here or we'll race the recognizer's teardown.
+        if (error.errorMsg == 'error_no_match') return;
         if (error.errorMsg == 'error_listen_failed') {
           _sttFailCount++;
         }
@@ -394,12 +399,15 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   /// Debounced restart — both onError and onStatus fire when STT stops,
-  /// so this collapses them into a single restart attempt.
+  /// so this collapses them into a single restart attempt. The base delay
+  /// needs to be long enough for iOS SFSpeechRecognizer to fully tear down
+  /// the previous session — restarting too quickly (<500ms) produces
+  /// error_listen_failed and the recognizer gets stuck in a retry loop.
   void _scheduleListenRestart() {
     _sttRestartTimer?.cancel();
     final delay = _sttFailCount >= 3
         ? const Duration(seconds: 2)
-        : const Duration(milliseconds: 300);
+        : const Duration(milliseconds: 800);
     _sttRestartTimer = Timer(delay, () {
       if (mounted && _isConnected && !_isAiSpeaking) {
         _startListening();
