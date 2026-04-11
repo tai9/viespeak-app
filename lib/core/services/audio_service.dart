@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:logger/logger.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -9,7 +10,7 @@ import 'package:record/record.dart';
 const _sampleRate = 24000;
 
 class AudioService {
-  final AudioRecorder _recorder = AudioRecorder();
+  AudioRecorder? _recorder;
   FlutterSoundPlayer? _player;
   bool _playerInitialized = false;
   // Cached init future so concurrent callers all await the same
@@ -33,7 +34,8 @@ class AudioService {
       throw Exception('Microphone permission denied');
     }
 
-    final stream = await _recorder.startStream(
+    _recorder ??= AudioRecorder();
+    final stream = await _recorder!.startStream(
       const RecordConfig(
         encoder: AudioEncoder.pcm16bits,
         sampleRate: _sampleRate,
@@ -49,22 +51,24 @@ class AudioService {
   }
 
   Future<void> stopRecording() async {
-    await _recorder.stop();
+    await _recorder?.stop();
     micStream = null;
   }
 
   /// Pause the hardware mic. The stream stays subscribed but stops emitting
   /// bytes, so nothing can be forwarded to OpenAI while the AI is speaking.
   Future<void> pauseRecording() async {
-    if (!await _recorder.isRecording()) return;
-    if (await _recorder.isPaused()) return;
-    await _recorder.pause();
+    if (_recorder == null) return;
+    if (!await _recorder!.isRecording()) return;
+    if (await _recorder!.isPaused()) return;
+    await _recorder!.pause();
   }
 
   /// Resume the hardware mic. No-op if we're not actually paused.
   Future<void> resumeRecording() async {
-    if (!await _recorder.isPaused()) return;
-    await _recorder.resume();
+    if (_recorder == null) return;
+    if (!await _recorder!.isPaused()) return;
+    await _recorder!.resume();
   }
 
   /// Idempotent, concurrent-safe player init. Call this eagerly (e.g. from
@@ -111,14 +115,63 @@ class AudioService {
     _playChain = Future.value();
   }
 
+  /// Play a complete MP3 buffer (e.g. from the /tts/chat endpoint).
+  ///
+  /// Unlike [playAudioChunk] (which feeds a PCM16 stream), this starts a
+  /// one-shot playback of a fully-buffered MP3 and returns a future that
+  /// completes when playback finishes or is stopped.
+  Future<void> playMp3(Uint8List mp3Bytes) async {
+    debugPrint('[AudioService] playMp3: ${mp3Bytes.length} bytes');
+    // Stop any in-progress PCM stream playback first.
+    if (_playerInitialized) {
+      await stopPlayback();
+    }
+    // Stop any previous MP3 playback that might still be active.
+    await stopMp3();
+
+    _player = FlutterSoundPlayer(logLevel: Level.error);
+    await _player!.openPlayer();
+    debugPrint('[AudioService] playMp3: player opened');
+    final completer = Completer<void>();
+    await _player!.startPlayer(
+      fromDataBuffer: mp3Bytes,
+      codec: Codec.mp3,
+      whenFinished: () {
+        debugPrint('[AudioService] playMp3: whenFinished callback');
+        if (!completer.isCompleted) completer.complete();
+      },
+    );
+    debugPrint('[AudioService] playMp3: startPlayer called');
+    _mp3Completer = completer;
+    await completer.future;
+    _mp3Completer = null;
+    await _player!.closePlayer();
+    _player = null;
+    debugPrint('[AudioService] playMp3: done, player closed');
+  }
+
+  Completer<void>? _mp3Completer;
+
+  /// Stop MP3 playback if active.
+  Future<void> stopMp3() async {
+    if (_mp3Completer != null && !_mp3Completer!.isCompleted) {
+      await _player?.stopPlayer();
+      _mp3Completer!.complete();
+      _mp3Completer = null;
+      await _player?.closePlayer();
+      _player = null;
+    }
+  }
+
   Future<void> dispose() async {
     await stopRecording();
+    await stopMp3();
     if (_playerInitialized) {
       await _player!.stopPlayer();
     }
     if (_player != null) {
       await _player!.closePlayer();
     }
-    _recorder.dispose();
+    _recorder?.dispose();
   }
 }

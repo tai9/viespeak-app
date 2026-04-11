@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>VieSpeak needs microphone access to have voice conversations with your AI companion.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>VieSpeak uses speech recognition to convert your voice to text during conversations.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>

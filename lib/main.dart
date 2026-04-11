@@ -13,6 +13,7 @@ import 'core/services/base_auth_service.dart';
 import 'core/services/mock_realtime_service.dart';
 import 'core/services/realtime_service.dart';
 import 'core/services/session_service.dart';
+import 'core/services/tts_chat_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -33,6 +34,7 @@ Future<void> main() async {
   final apiService = ApiService(authService);
   final sessionService = SessionService(authService);
   final realtimeService = isDev ? MockRealtimeService() : RealtimeService();
+  final ttsChatService = TtsChatService(authService);
 
   runApp(
     ProviderScope(
@@ -41,6 +43,7 @@ Future<void> main() async {
         apiServiceProvider.overrideWithValue(apiService),
         sessionServiceProvider.overrideWithValue(sessionService),
         realtimeServiceProvider.overrideWithValue(realtimeService),
+        ttsChatServiceProvider.overrideWithValue(ttsChatService),
       ],
       child: const ViespeakApp(),
     ),

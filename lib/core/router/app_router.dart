@@ -6,6 +6,7 @@ import '../../features/auth/login_screen.dart';
 import '../../features/conversation/conversation_screen.dart';
 import '../../features/onboarding/persona_selection_screen.dart';
 import '../../features/profile/profile_screen.dart';
+import '../../shared/widgets/error_screen.dart';
 import '../providers/profile_providers.dart';
 import '../services/base_auth_service.dart';
 
@@ -75,8 +76,8 @@ class _ProfileGate extends ConsumerWidget {
 
     return profileAsync.when(
       loading: () => const SplashScreen(),
-      error: (error, _) => Scaffold(
-        body: Center(child: Text('Error: $error')),
+      error: (error, _) => ErrorScreen(
+        onRetry: () => ref.invalidate(profileProvider),
       ),
       data: (profile) {
         WidgetsBinding.instance.addPostFrameCallback((_) {

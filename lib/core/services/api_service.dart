@@ -15,6 +15,8 @@ class SessionExpiredException implements Exception {
 }
 
 class ApiService {
+  static const _timeout = Duration(seconds: 15);
+
   final BaseAuthService _authService;
 
   ApiService(this._authService);
@@ -49,7 +51,7 @@ class ApiService {
     final response = await http.get(
       Uri.parse('$_baseUrl/api/profile'),
       headers: _headers,
-    );
+    ).timeout(_timeout);
     debugPrint('[ApiService] /api/profile → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200) {
@@ -76,7 +78,7 @@ class ApiService {
         'name': name,
         'persona_id': personaId,
       }),
-    );
+    ).timeout(_timeout);
     debugPrint('[ApiService] /api/profile → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200) {
@@ -97,7 +99,7 @@ class ApiService {
       Uri.parse('$_baseUrl/api/profile/persona'),
       headers: _headers,
       body: jsonEncode({'persona_id': personaId}),
-    );
+    ).timeout(_timeout);
     debugPrint('[ApiService] /api/profile/persona → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200) {
@@ -118,7 +120,7 @@ class ApiService {
     final response = await http.get(
       Uri.parse('$_baseUrl/api/personas'),
       headers: _headers,
-    );
+    ).timeout(_timeout);
     debugPrint('[ApiService] /api/personas → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200) {
@@ -137,7 +139,7 @@ class ApiService {
     final response = await http.get(
       Uri.parse('$_baseUrl/session/quota'),
       headers: _headers,
-    );
+    ).timeout(_timeout);
     debugPrint(
       '[ApiService] /session/quota → ${response.statusCode} '
       'body=${response.body}',
@@ -155,7 +157,7 @@ class ApiService {
     final response = await http.get(
       Uri.parse('$_baseUrl/api/memories'),
       headers: _headers,
-    );
+    ).timeout(_timeout);
     debugPrint(
       '[ApiService] /api/memories → ${response.statusCode} '
       '(${response.body.length} bytes)',

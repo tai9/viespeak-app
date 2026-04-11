@@ -4,6 +4,7 @@ import '../services/api_service.dart';
 import '../services/base_auth_service.dart';
 import '../services/realtime_service.dart';
 import '../services/session_service.dart';
+import '../services/tts_chat_service.dart';
 
 /// Auth service — provided as override from main()
 final authServiceProvider = Provider<BaseAuthService>((ref) {
@@ -37,4 +38,9 @@ final sessionServiceProvider = Provider<SessionService>((ref) {
 /// Realtime service — provided as override from main()
 final realtimeServiceProvider = Provider<RealtimeService>((ref) {
   throw UnimplementedError('realtimeServiceProvider must be overridden');
+});
+
+/// TTS chat service — provided as override from main()
+final ttsChatServiceProvider = Provider<TtsChatService>((ref) {
+  throw UnimplementedError('ttsChatServiceProvider must be overridden');
 });

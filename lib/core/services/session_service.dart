@@ -8,17 +8,31 @@ import '../personas/persona.dart';
 import 'api_service.dart';
 import 'base_auth_service.dart';
 
+/// The conversation mode returned by `/session/init`.
+enum SessionMode { s2s, tts }
+
 class SessionInitResult {
-  final String token;
+  final SessionMode mode;
   final int remainingSeconds;
-  final String model;
   final Persona persona;
 
+  /// Only present in S2S mode — ephemeral token for OpenAI Realtime API.
+  final String? token;
+
+  /// Only present in S2S mode — OpenAI model identifier.
+  final String? model;
+
+  /// Only present in TTS mode — identifies this session for `/tts/chat` and
+  /// `/session/end` calls.
+  final String? sessionId;
+
   SessionInitResult({
-    required this.token,
+    required this.mode,
     required this.remainingSeconds,
-    required this.model,
     required this.persona,
+    this.token,
+    this.model,
+    this.sessionId,
   });
 }
 
@@ -51,6 +65,8 @@ class ProfileNotFoundException implements Exception {
 }
 
 class SessionService {
+  static const _timeout = Duration(seconds: 15);
+
   final BaseAuthService _authService;
 
   SessionService(this._authService);
@@ -63,13 +79,18 @@ class SessionService {
           'Authorization': 'Bearer ${_authService.token}',
       };
 
-  /// GET /session/init — get ephemeral token for OpenAI Realtime API
+  /// GET /session/init — initializes a conversation session.
+  ///
+  /// The response contains a `mode` field (`"s2s"` or `"tts"`) that determines
+  /// which conversation flow the client should use:
+  /// - `s2s`: WebSocket to OpenAI Realtime API (response includes `token` + `model`)
+  /// - `tts`: HTTP turn-based via `/tts/chat` (response includes `session_id`)
   Future<SessionInitResult> getSessionInit() async {
     debugPrint('[SessionService] GET /session/init');
     final response = await http.get(
       Uri.parse('$_baseUrl/session/init'),
       headers: _headers,
-    );
+    ).timeout(_timeout);
     debugPrint('[SessionService] /session/init → ${response.statusCode}');
 
     if (response.statusCode == 401) {
@@ -79,8 +100,6 @@ class SessionService {
     }
 
     if (response.statusCode == 400) {
-      // Backend returns this when the user has no profile row. Route to
-      // onboarding instead of showing a generic error.
       throw ProfileNotFoundException();
     }
 
@@ -101,27 +120,41 @@ class SessionService {
     }
 
     final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final modeStr = body['mode'] as String? ?? 's2s';
+    final mode = modeStr == 'tts' ? SessionMode.tts : SessionMode.s2s;
+
     return SessionInitResult(
-      token: body['token'] as String,
+      mode: mode,
       remainingSeconds: body['remaining_seconds'] as int,
-      model: body['model'] as String,
       persona: Persona.fromJson(body['persona'] as Map<String, dynamic>),
+      token: body['token'] as String?,
+      model: body['model'] as String?,
+      sessionId: body['session_id'] as String?,
     );
   }
 
-  /// POST /session/end — send transcript and duration to backend
+  /// POST /session/end — send transcript and duration to backend.
+  ///
+  /// [sessionId] is required for TTS mode sessions so the backend can clean up
+  /// the in-memory TTS session state.
   Future<void> endSession({
     required List<Map<String, String>> transcript,
     required int durationSeconds,
+    String? sessionId,
   }) async {
     final url = '$_baseUrl/session/end';
-    final body = jsonEncode({
+    final payload = <String, dynamic>{
       'transcript': transcript,
       'duration_seconds': durationSeconds,
-    });
+    };
+    if (sessionId != null) {
+      payload['session_id'] = sessionId;
+    }
+    final body = jsonEncode(payload);
     debugPrint(
       '[SessionService] POST $url '
-      'transcript=${transcript.length} items, duration=${durationSeconds}s',
+      'transcript=${transcript.length} items, duration=${durationSeconds}s'
+      '${sessionId != null ? ', session_id=$sessionId' : ''}',
     );
     debugPrint('[SessionService] request body: $body');
     try {
@@ -129,7 +162,7 @@ class SessionService {
         Uri.parse(url),
         headers: _headers,
         body: body,
-      );
+      ).timeout(_timeout);
       debugPrint(
         '[SessionService] /session/end → ${response.statusCode} '
         'body=${response.body}',

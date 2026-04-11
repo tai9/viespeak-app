@@ -8,15 +8,16 @@ class MockSessionService extends SessionService {
   Future<SessionInitResult> getSessionInit() async {
     await Future.delayed(const Duration(milliseconds: 300));
     return SessionInitResult(
-      token: 'mock-ephemeral-token',
+      mode: SessionMode.s2s,
       remainingSeconds: 600,
-      model: 'gpt-4o-mini-realtime-preview',
       persona: const Persona(
         id: 'alex',
         name: 'Alex',
         description: 'Senior software engineer from Singapore.',
         voice: 'alloy',
       ),
+      token: 'mock-ephemeral-token',
+      model: 'gpt-4o-mini-realtime-preview',
     );
   }
 
@@ -24,6 +25,7 @@ class MockSessionService extends SessionService {
   Future<void> endSession({
     required List<Map<String, String>> transcript,
     required int durationSeconds,
+    String? sessionId,
   }) async {
     await Future.delayed(const Duration(milliseconds: 200));
   }
