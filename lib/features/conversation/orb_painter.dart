@@ -7,14 +7,12 @@ import 'voice_orb_widget.dart';
 
 class OrbPainter extends CustomPainter {
   final OrbState state;
-  final double audioLevel;
   final double breathPhase;
   final double rotationPhase;
   final double glowPhase;
 
   OrbPainter({
     required this.state,
-    required this.audioLevel,
     required this.breathPhase,
     required this.rotationPhase,
     required this.glowPhase,
@@ -45,16 +43,19 @@ class OrbPainter extends CustomPainter {
   }
 
   void _drawGlow(Canvas canvas, Offset center, double baseRadius) {
+    // Static per-state glow — amplitude-driven scaling is applied at the
+    // widget level via `Transform.scale`, which grows the glow along with
+    // the circle. Doing it here too would double-dip.
     final glowIntensity = switch (state) {
       OrbState.idle => 0.04 + glowPhase * 0.03,
-      OrbState.userSpeaking => 0.06 + audioLevel * 0.10,
-      OrbState.aiSpeaking => 0.08 + audioLevel * 0.14,
+      OrbState.userSpeaking => 0.08,
+      OrbState.aiSpeaking => 0.10,
     };
 
     final glowRadius = switch (state) {
       OrbState.idle => baseRadius * (1.1 + glowPhase * 0.08),
-      OrbState.userSpeaking => baseRadius * (1.15 + audioLevel * 0.15),
-      OrbState.aiSpeaking => baseRadius * (1.2 + audioLevel * 0.2),
+      OrbState.userSpeaking => baseRadius * 1.2,
+      OrbState.aiSpeaking => baseRadius * 1.25,
     };
 
     // Outer glow
@@ -79,32 +80,35 @@ class OrbPainter extends CustomPainter {
 
     canvas.drawPath(path, paint);
 
-    // Outer soft glow border
+    // Outer soft glow border — independent of amplitude; the widget's
+    // scale transform handles the amp response.
     final idlePulse = glowPhase * 0.08;
-    final outerWidth = 4.0 + glowPhase * 4.0 + audioLevel * 8.0;
-    final outerBlur = 4.0 + glowPhase * 4.0 + audioLevel * 6.0;
     final outerPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = outerWidth
-      ..color = _glowColor.withValues(alpha: 0.03 + idlePulse * 0.4 + audioLevel * 0.06)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, outerBlur);
+      ..strokeWidth = 4.0 + glowPhase * 4.0
+      ..color = _glowColor.withValues(alpha: 0.03 + idlePulse * 0.4)
+      ..maskFilter = MaskFilter.blur(
+        BlurStyle.normal,
+        4.0 + glowPhase * 4.0,
+      );
     canvas.drawPath(path, outerPaint);
 
     // Mid shadow border
-    final midWidth = 2.0 + glowPhase * 3.0 + audioLevel * 6.0;
-    final midBlur = 2.0 + glowPhase * 3.0 + audioLevel * 5.0;
     final midPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = midWidth
-      ..color = _glowColor.withValues(alpha: 0.05 + idlePulse + audioLevel * 0.10)
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, midBlur);
+      ..strokeWidth = 2.0 + glowPhase * 3.0
+      ..color = _glowColor.withValues(alpha: 0.05 + idlePulse)
+      ..maskFilter = MaskFilter.blur(
+        BlurStyle.normal,
+        2.0 + glowPhase * 3.0,
+      );
     canvas.drawPath(path, midPaint);
 
     // Crisp inner border
     final borderPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.5 + glowPhase * 0.5 + audioLevel * 1.5
-      ..color = _glowColor.withValues(alpha: 0.08 + idlePulse + audioLevel * 0.15);
+      ..strokeWidth = 0.5 + glowPhase * 0.5
+      ..color = _glowColor.withValues(alpha: 0.08 + idlePulse);
     canvas.drawPath(path, borderPaint);
   }
 
@@ -112,12 +116,10 @@ class OrbPainter extends CustomPainter {
     final points = <Offset>[];
     final rotPhase = rotationPhase * 2 * math.pi;
 
-    // Perturbation amount scales with audio level
-    final maxPerturbation = switch (state) {
-      OrbState.idle => baseRadius * 0.015,
-      OrbState.userSpeaking => baseRadius * (0.03 + audioLevel * 0.12),
-      OrbState.aiSpeaking => baseRadius * (0.03 + audioLevel * 0.15),
-    };
+    // Gentle, amplitude-independent perturbation so the orb has an
+    // organic shape but doesn't wobble with voice. Voice response lives
+    // in the widget's `Transform.scale`.
+    final maxPerturbation = baseRadius * 0.015;
 
     for (var i = 0; i < _pointCount; i++) {
       final angle = 2 * math.pi * i / _pointCount;

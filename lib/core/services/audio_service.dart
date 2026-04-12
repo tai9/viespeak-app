@@ -1,16 +1,29 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_sound/flutter_sound.dart';
 import 'package:logger/logger.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
 const _sampleRate = 24000;
+const _voiceSampleRate = 16000;
 
 class AudioService {
   AudioRecorder? _recorder;
+  // Separate recorder for the /tts/voice voice-in path. We stream PCM16
+  // via AVAudioEngine (same path S2S uses — this is the one that actually
+  // works on iOS) and wrap the bytes in a WAV container on stop. An
+  // earlier iteration used file-mode AAC-LC via AVAudioRecorder, but that
+  // returned dead air (-120 dBFS) on device — `RecorderFileDelegate` also
+  // silently ignores the echoCancel/noiseSuppress/autoGain flags.
+  AudioRecorder? _voiceRecorder;
+  String? _voiceRecordingPath;
+  StreamSubscription<Uint8List>? _voiceStreamSub;
+  BytesBuilder? _voiceBuffer;
   FlutterSoundPlayer? _player;
   bool _playerInitialized = false;
   // Cached init future so concurrent callers all await the same
@@ -53,6 +66,149 @@ class AudioService {
   Future<void> stopRecording() async {
     await _recorder?.stop();
     micStream = null;
+  }
+
+  /// Start recording a single voice-in turn to a temporary wav file.
+  ///
+  /// Used by `VoiceTurnController` / `/tts/voice` — the client records a
+  /// complete user utterance, ships the file to the backend, and waits for
+  /// a single MP3 reply.
+  ///
+  /// Uses stream mode (PCM16 via `AVAudioEngine` on iOS / the Android
+  /// equivalent) and wraps the raw bytes in a RIFF/WAVE header on stop.
+  /// This is the same capture path the S2S mode uses successfully; the
+  /// file-mode alternative (`AVAudioRecorder` + AAC-LC) returns silent
+  /// audio on iOS and silently ignores voice-processing flags.
+  ///
+  /// Returns the absolute file path that will be written on
+  /// [stopVoiceRecording].
+  Future<String> startVoiceRecording() async {
+    final granted = await requestPermission();
+    if (!granted) {
+      throw Exception('Microphone permission denied');
+    }
+
+    // Fresh recorder per turn keeps state simple and lets us reuse the
+    // _voiceRecordingPath slot without worrying about leftover buffers
+    // from a previous turn.
+    await _voiceStreamSub?.cancel();
+    _voiceStreamSub = null;
+    await _voiceRecorder?.dispose();
+    _voiceRecorder = AudioRecorder();
+    _voiceBuffer = BytesBuilder(copy: false);
+
+    final dir = await getTemporaryDirectory();
+    final path =
+        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
+    _voiceRecordingPath = path;
+
+    final stream = await _voiceRecorder!.startStream(
+      const RecordConfig(
+        encoder: AudioEncoder.pcm16bits,
+        sampleRate: _voiceSampleRate,
+        numChannels: 1,
+        bitRate: _voiceSampleRate * 16,
+        echoCancel: true,
+        noiseSuppress: true,
+        autoGain: true,
+      ),
+    );
+
+    _voiceStreamSub = stream.listen(
+      (chunk) => _voiceBuffer?.add(chunk),
+      onError: (Object e) =>
+          debugPrint('[AudioService] voice stream error: $e'),
+    );
+
+    debugPrint('[AudioService] voice recording (PCM16→WAV) → $path');
+    return path;
+  }
+
+  /// Stops the in-progress voice recording, wraps the captured PCM16
+  /// buffer in a WAV container, writes it to disk, and returns its path.
+  /// Returns `null` if nothing was recording.
+  Future<String?> stopVoiceRecording() async {
+    if (_voiceRecorder == null) return null;
+    await _voiceStreamSub?.cancel();
+    _voiceStreamSub = null;
+    try {
+      await _voiceRecorder!.stop();
+    } catch (e) {
+      debugPrint('[AudioService] voice stop error: $e');
+    }
+    final pcm = _voiceBuffer?.takeBytes() ?? Uint8List(0);
+    _voiceBuffer = null;
+    final path = _voiceRecordingPath;
+    _voiceRecordingPath = null;
+    if (path == null) return null;
+    try {
+      final wav = _buildWavFile(
+        pcm16: pcm,
+        sampleRate: _voiceSampleRate,
+        numChannels: 1,
+      );
+      await File(path).writeAsBytes(wav, flush: true);
+      debugPrint(
+        '[AudioService] voice recording stopped '
+        '(pcm=${pcm.length}B wav=${wav.length}B) → $path',
+      );
+    } catch (e) {
+      debugPrint('[AudioService] WAV write failed: $e');
+    }
+    return path;
+  }
+
+  /// Wraps a little-endian PCM16 buffer in a 44-byte RIFF/WAVE header.
+  /// The `record` package gives us raw samples from stream mode; the
+  /// backend expects a self-describing audio file, so we package it here
+  /// before upload.
+  static Uint8List _buildWavFile({
+    required Uint8List pcm16,
+    required int sampleRate,
+    required int numChannels,
+  }) {
+    const bitsPerSample = 16;
+    final byteRate = sampleRate * numChannels * bitsPerSample ~/ 8;
+    final blockAlign = numChannels * bitsPerSample ~/ 8;
+    final dataSize = pcm16.length;
+    final fileSize = 36 + dataSize;
+
+    final b = BytesBuilder(copy: false);
+    b.add(const [0x52, 0x49, 0x46, 0x46]); // "RIFF"
+    b.add(_u32le(fileSize));
+    b.add(const [0x57, 0x41, 0x56, 0x45]); // "WAVE"
+    b.add(const [0x66, 0x6d, 0x74, 0x20]); // "fmt "
+    b.add(_u32le(16)); // PCM fmt chunk size
+    b.add(_u16le(1)); // format = PCM
+    b.add(_u16le(numChannels));
+    b.add(_u32le(sampleRate));
+    b.add(_u32le(byteRate));
+    b.add(_u16le(blockAlign));
+    b.add(_u16le(bitsPerSample));
+    b.add(const [0x64, 0x61, 0x74, 0x61]); // "data"
+    b.add(_u32le(dataSize));
+    b.add(pcm16);
+    return b.toBytes();
+  }
+
+  static List<int> _u32le(int v) => [
+        v & 0xff,
+        (v >> 8) & 0xff,
+        (v >> 16) & 0xff,
+        (v >> 24) & 0xff,
+      ];
+
+  static List<int> _u16le(int v) => [v & 0xff, (v >> 8) & 0xff];
+
+  /// Amplitude updates for the in-progress voice recording, sampled at
+  /// [interval]. Used by `VoiceTurnController` as a simple amplitude-based
+  /// VAD. Returns an empty stream if no voice recording is active.
+  Stream<Amplitude> voiceAmplitudeStream({
+    Duration interval = const Duration(milliseconds: 100),
+  }) {
+    final r = _voiceRecorder;
+    if (r == null) return const Stream.empty();
+    return r.onAmplitudeChanged(interval);
   }
 
   /// Pause the hardware mic. The stream stays subscribed but stops emitting
@@ -165,6 +321,7 @@ class AudioService {
 
   Future<void> dispose() async {
     await stopRecording();
+    await stopVoiceRecording();
     await stopMp3();
     if (_playerInitialized) {
       await _player!.stopPlayer();
@@ -173,5 +330,6 @@ class AudioService {
       await _player!.closePlayer();
     }
     _recorder?.dispose();
+    _voiceRecorder?.dispose();
   }
 }

@@ -81,7 +81,7 @@ class ApiService {
     ).timeout(_timeout);
     debugPrint('[ApiService] /api/profile → ${response.statusCode}');
     _checkUnauthorized(response);
-    if (response.statusCode == 200) {
+    if (response.statusCode == 200 || response.statusCode == 201) {
       return jsonDecode(response.body) as Map<String, dynamic>;
     }
     if (response.statusCode == 400) {

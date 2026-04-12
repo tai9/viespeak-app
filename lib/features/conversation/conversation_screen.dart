@@ -6,8 +6,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:speech_to_text/speech_recognition_result.dart';
-import 'package:speech_to_text/speech_to_text.dart';
 
 import '../../core/personas/persona.dart';
 import '../../core/providers/profile_providers.dart';
@@ -16,6 +14,7 @@ import '../../core/services/audio_service.dart';
 import '../../core/services/conversation_controller.dart';
 import '../../core/services/realtime_service.dart';
 import '../../core/services/session_service.dart';
+import '../../core/services/voice_turn_controller.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/date_utils.dart';
 import '../../shared/utils/error_utils.dart';
@@ -72,13 +71,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   // ─── TTS mode state ───────────────────────────────────────────────────
   SessionMode? _mode;
   String? _sessionId;
-  final SpeechToText _stt = SpeechToText();
-  bool _sttAvailable = false;
-  bool _isListening = false;
-  bool _isAiSpeaking = false;
-  // Track the latest recognized words so we can show them in the floating
-  // transcript while the user is still talking.
-  String _currentSttText = '';
+  VoiceTurnController? _voiceController;
+  VoiceTurnState _voiceState = VoiceTurnState.idle;
+  // Orb input in TTS mode — populated from VoiceTurnController.onAmplitude
+  // (raw dBFS ~ -160..0) by mapping into the 0..1 range the orb expects.
+  // Stays at 0 when no turn is listening so the orb settles to its idle pose.
+  final _voiceMicLevel = ValueNotifier<double>(0.0);
+  final _voiceAiLevel = ValueNotifier<double>(0.0);
 
   @override
   void initState() {
@@ -95,10 +94,9 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   @override
   void dispose() {
     _sessionTimer?.cancel();
-    _sttRestartTimer?.cancel();
-    _cancelSilenceTimer();
     _cancelSubscriptions();
     _controller.state.removeListener(_onStateChanged);
+    _voiceController?.state.removeListener(_onVoiceStateChanged);
     // If the user navigates away mid-session (back button, route pop) the
     // Stop button's _endConversation never runs. Fire the session end here
     // so the backend can still persist the transcript as a memory and
@@ -123,9 +121,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
       _sessionStartTime = null;
     }
     if (_mode == SessionMode.tts) {
-      _stt.stop();
-      _audioService.stopMp3();
+      _voiceController?.stop();
+      _voiceController?.dispose();
+      _voiceController = null;
     }
+    _voiceMicLevel.dispose();
+    _voiceAiLevel.dispose();
     _controller.stop();
     _controller.dispose();
     _audioService.dispose();
@@ -237,7 +238,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
       // 3. Branch on mode
       if (sessionInit.mode == SessionMode.tts) {
-        await _startTtsMode();
+        await _startVoiceTurnMode();
       } else {
         await _startS2sMode(sessionInit);
       }
@@ -255,12 +256,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
         _isConnected = true;
         _isConnecting = false;
       });
-
-      // Start STT listening after _isConnected is true (TTS mode only).
-      if (_mode == SessionMode.tts) {
-        _startListening();
-        _resetSilenceTimer();
-      }
     } catch (e) {
       setState(() => _isConnecting = false);
       if (mounted) {
@@ -344,190 +339,82 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     ]);
   }
 
-  // ─── TTS mode (local STT → /tts/chat → play MP3) ───────────────────
+  // ─── TTS mode (record → /tts/voice → crossfaded MP3 playback) ───────
 
-  Timer? _sttRestartTimer;
-  Timer? _silenceTimer;
-  int _sttFailCount = 0;
-  /// Guards against reacting to onStatus/onError before the first
-  /// explicit _startListening() call — initialize() fires spurious
-  /// callbacks that would otherwise race with the real start.
-  bool _sttActive = false;
-
-  /// Reset the silence timer. After 10s of no user speech, the AI
-  /// proactively sends a nudge to re-engage the user.
-  void _resetSilenceTimer() {
-    _silenceTimer?.cancel();
-    if (!_isConnected || _isAiSpeaking) return;
-    _silenceTimer = Timer(const Duration(seconds: 10), () {
-      if (mounted && _isConnected && !_isAiSpeaking) {
-        debugPrint('[TTS] silence timeout — sending nudge');
-        _sendTtsChatTurn('[silence]');
-      }
-    });
-  }
-
-  Future<void> _startTtsMode() async {
-    _sttAvailable = await _stt.initialize(
-      onError: (error) {
-        debugPrint('[TTS-STT] error: ${error.errorMsg}');
-        if (!_sttActive) return;
-        // error_no_match is a NORMAL event — it just means the listen
-        // window ended without recognizing anything. The 'done' status
-        // handler below will schedule the restart; don't double-schedule
-        // here or we'll race the recognizer's teardown.
-        if (error.errorMsg == 'error_no_match') return;
-        if (error.errorMsg == 'error_listen_failed') {
-          _sttFailCount++;
-        }
-        _scheduleListenRestart();
-      },
-      onStatus: (status) {
-        debugPrint('[TTS-STT] status: $status');
-        if (!_sttActive) return;
-        if (status == 'listening') {
-          _sttFailCount = 0;
-        } else if (status == 'done') {
-          _scheduleListenRestart();
-        }
-      },
+  Future<void> _startVoiceTurnMode() async {
+    final controller = VoiceTurnController(
+      service: ref.read(voiceTurnServiceProvider),
+      audio: _audioService,
     );
+    _voiceController = controller;
+    controller.state.addListener(_onVoiceStateChanged);
 
-    if (!_sttAvailable) {
-      throw Exception('Speech recognition is not available on this device.');
+    _subscriptions.addAll([
+      controller.onUserTranscript.listen(_appendUserEntry),
+      controller.onAssistantTranscript.listen(_appendAssistantEntry),
+      controller.onError.listen(_onVoiceError),
+      // Feed the amplitude meter into the orb. Map dBFS to 0..1 with a
+      // usable speech window: room noise (~-55 dBFS) → 0, loud speech
+      // (~-5 dBFS) → 1. The orb's own smoothing handles the rest.
+      controller.onAmplitude.listen((db) {
+        final level = ((db + 55) / 50).clamp(0.0, 1.0);
+        _voiceMicLevel.value = level;
+      }),
+    ]);
+
+    await controller.start(sessionId: _sessionId!);
+  }
+
+  void _onVoiceStateChanged() {
+    final next = _voiceController?.state.value;
+    if (next == null || next == _voiceState) return;
+    if (next == VoiceTurnState.listening ||
+        next == VoiceTurnState.speaking) {
+      HapticFeedback.selectionClick();
     }
-  }
-
-  /// Debounced restart — both onError and onStatus fire when STT stops,
-  /// so this collapses them into a single restart attempt. The base delay
-  /// needs to be long enough for iOS SFSpeechRecognizer to fully tear down
-  /// the previous session — restarting too quickly (<500ms) produces
-  /// error_listen_failed and the recognizer gets stuck in a retry loop.
-  void _scheduleListenRestart() {
-    _sttRestartTimer?.cancel();
-    final delay = _sttFailCount >= 3
-        ? const Duration(seconds: 2)
-        : const Duration(milliseconds: 800);
-    _sttRestartTimer = Timer(delay, () {
-      if (mounted && _isConnected && !_isAiSpeaking) {
-        _startListening();
-      }
-    });
-  }
-
-  void _cancelSilenceTimer() {
-    _silenceTimer?.cancel();
-    _silenceTimer = null;
-  }
-
-  void _startListening() {
-    if (!_sttAvailable || !_isConnected || _isAiSpeaking) return;
-    if (_stt.isListening) return;
-    _sttActive = true;
-    _isListening = true;
-    _currentSttText = '';
-    if (mounted) setState(() {});
-
-    _stt.listen(
-      onResult: _onSttResult,
-      listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 5),
-      localeId: 'en_US',
-      listenOptions: SpeechListenOptions(
-        cancelOnError: false,
-        listenMode: ListenMode.dictation,
-      ),
-    );
-  }
-
-  void _stopListening() {
-    _sttRestartTimer?.cancel();
-    _cancelSilenceTimer();
-    _sttActive = false;
-    _isListening = false;
-    _stt.stop();
-    if (mounted) setState(() {});
-  }
-
-  void _onSttResult(SpeechRecognitionResult result) {
-    _currentSttText = result.recognizedWords;
-    if (mounted) setState(() {});
-
-    // User is speaking — cancel silence nudge.
-    if (_currentSttText.isNotEmpty) {
-      _cancelSilenceTimer();
+    // Drop the orb back to its resting pose when we leave the listening
+    // phase — the amplitude stream stops emitting at that point, so the
+    // notifier would otherwise stay pinned at the last observed value.
+    if (next != VoiceTurnState.listening) {
+      _voiceMicLevel.value = 0.0;
     }
-
-    if (result.finalResult && _currentSttText.trim().isNotEmpty) {
-      final userText = _currentSttText.trim();
-      _currentSttText = '';
-      _sendTtsChatTurn(userText);
-    }
+    setState(() => _voiceState = next);
   }
 
-  Future<void> _sendTtsChatTurn(String userText) async {
-    // Stop listening while AI responds
-    _stopListening();
-
-    final isSilenceNudge = userText == '[silence]';
-
-    // Add user entry (skip for silence nudges — no user text to show)
-    if (!isSilenceNudge) {
-      setState(() {
-        _entries.add(
-          TranscriptEntry(speaker: 'user', text: userText, isFinalized: true),
-        );
-      });
-      _transcriptLog.add({'role': 'user', 'content': userText});
-      _addFloatingTranscript(userText, true);
-      HapticFeedback.lightImpact();
-    }
-    setState(() => _isAiSpeaking = true);
-
-    try {
-      final ttsService = ref.read(ttsChatServiceProvider);
-      final result = await ttsService.chat(
-        sessionId: _sessionId!,
-        text: userText,
+  void _appendUserEntry(String text) {
+    if (text.trim().isEmpty) return;
+    setState(() {
+      _entries.add(
+        TranscriptEntry(speaker: 'user', text: text, isFinalized: true),
       );
+    });
+    _transcriptLog.add({'role': 'user', 'content': text});
+    _addFloatingTranscript(text, true);
+    HapticFeedback.lightImpact();
+  }
 
-      // Show assistant text
-      final assistantText = result.assistantText ?? '';
-      if (assistantText.isNotEmpty) {
-        setState(() {
-          _entries.add(
-            TranscriptEntry(
-              speaker: 'assistant',
-              text: assistantText,
-              isFinalized: true,
-            ),
-          );
-        });
-        _transcriptLog.add({'role': 'assistant', 'content': assistantText});
-        _addFloatingTranscript(assistantText, false);
-        HapticFeedback.lightImpact();
-      }
+  void _appendAssistantEntry(String text) {
+    if (text.trim().isEmpty) return;
+    setState(() {
+      _entries.add(
+        TranscriptEntry(
+          speaker: 'assistant',
+          text: text,
+          isFinalized: true,
+        ),
+      );
+    });
+    _transcriptLog.add({'role': 'assistant', 'content': text});
+    _addFloatingTranscript(text, false);
+    HapticFeedback.lightImpact();
+  }
 
-      // Play audio
-      if (result.audioBytes.isNotEmpty) {
-        await _audioService.playMp3(result.audioBytes);
-      }
-    } catch (e) {
-      debugPrint('[TTS] chat turn failed: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(friendlyError(e))));
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isAiSpeaking = false);
-        // Resume listening for next turn
-        _startListening();
-        // Start silence timer — fires once, survives STT restart cycles.
-        _resetSilenceTimer();
-      }
-    }
+  void _onVoiceError(Object error) {
+    debugPrint('[VoiceTurn] error surfaced to UI: $error');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(friendlyError(error))),
+    );
   }
 
   Future<void> _endConversation() async {
@@ -536,15 +423,20 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     _cancelSubscriptions();
 
     if (_mode == SessionMode.tts) {
-      _stopListening();
-      await _audioService.stopMp3();
+      final vc = _voiceController;
+      if (vc != null) {
+        vc.state.removeListener(_onVoiceStateChanged);
+        await vc.stop();
+        vc.dispose();
+        _voiceController = null;
+      }
+      _voiceState = VoiceTurnState.idle;
     } else {
       await _controller.stop();
     }
 
     setState(() {
       _isConnected = false;
-      _isAiSpeaking = false;
     });
 
     if (_sessionStartTime != null) {
@@ -835,33 +727,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                 ),
               ),
 
-            // Live STT text — show what the user is saying in real time (TTS mode)
-            if (_mode == SessionMode.tts && _isConnected && _currentSttText.isNotEmpty)
-              Positioned(
-                left: 24,
-                right: 24,
-                bottom: 120,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.warmStoneSurface.withValues(alpha: 0.9),
-                    borderRadius: BorderRadius.circular(AppRadius.card),
-                  ),
-                  child: Text(
-                    _currentSttText,
-                    style: AppTypography.bodyStandard.copyWith(
-                      color: AppColors.warmGray,
-                      fontStyle: FontStyle.italic,
-                    ),
-                    textAlign: TextAlign.center,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
           ],
         ),
       ),
@@ -869,17 +734,16 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   }
 
   Widget _buildOrb({required bool canStart}) {
-    // In TTS mode, derive orb state from local flags instead of the S2S
-    // controller's state machine.
+    // TTS mode drives the orb from VoiceTurnController's state machine;
+    // S2S mode keeps the existing ConversationController wiring.
     final OrbState orbState;
     if (_mode == SessionMode.tts && _isConnected) {
-      if (_isAiSpeaking) {
-        orbState = OrbState.aiSpeaking;
-      } else if (_isListening && _currentSttText.isNotEmpty) {
-        orbState = OrbState.userSpeaking;
-      } else {
-        orbState = OrbState.idle;
-      }
+      orbState = switch (_voiceState) {
+        VoiceTurnState.speaking => OrbState.aiSpeaking,
+        VoiceTurnState.listening => OrbState.userSpeaking,
+        VoiceTurnState.thinking => OrbState.idle,
+        VoiceTurnState.idle => OrbState.idle,
+      };
     } else {
       final convState = _controller.state.value;
       orbState = switch (convState) {
@@ -917,10 +781,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           }
           if (!canStart) return;
           _startConversation();
-        } else if (_mode == SessionMode.tts && _isAiSpeaking) {
-          // Tap-to-interrupt in TTS mode: stop MP3 playback
+        } else if (_mode == SessionMode.tts &&
+            _voiceState == VoiceTurnState.speaking) {
+          // Tap-to-interrupt in TTS mode: stop reply playback and go back
+          // to listening. VoiceTurnController handles the state transition.
           HapticFeedback.mediumImpact();
-          _audioService.stopMp3();
+          _voiceController?.interrupt();
         } else if (_mode != SessionMode.tts &&
             _controller.state.value == ConversationState.aiSpeaking) {
           // Tap-to-interrupt in S2S mode
@@ -936,8 +802,12 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           children: [
             VoiceOrbWidget(
               state: orbState,
-              micLevel: _controller.micLevel,
-              aiLevel: _controller.aiLevel,
+              micLevel: _mode == SessionMode.tts
+                  ? _voiceMicLevel
+                  : _controller.micLevel,
+              aiLevel: _mode == SessionMode.tts
+                  ? _voiceAiLevel
+                  : _controller.aiLevel,
             ),
             // "Start talking" overlay — only when idle
             if (!_isConnected)

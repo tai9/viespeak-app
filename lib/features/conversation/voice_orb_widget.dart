@@ -121,12 +121,6 @@ class _VoiceOrbWidgetState extends State<VoiceOrbWidget>
         widget.aiLevel,
       ]),
       builder: (_, _) {
-        final activeLevel = switch (widget.state) {
-          OrbState.userSpeaking => widget.micLevel.value,
-          OrbState.aiSpeaking => widget.aiLevel.value,
-          OrbState.idle => 0.0,
-        };
-
         const baseSize = 260.0;
 
         return Transform.scale(
@@ -138,7 +132,6 @@ class _VoiceOrbWidgetState extends State<VoiceOrbWidget>
               size: const Size(baseSize, baseSize),
               painter: OrbPainter(
                 state: widget.state,
-                audioLevel: activeLevel,
                 breathPhase: _breathController.value,
                 rotationPhase: _rotationController.value,
                 glowPhase: _glowController.value,

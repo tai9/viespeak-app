@@ -2,9 +2,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../services/api_service.dart';
 import '../services/base_auth_service.dart';
+import '../services/filler_audio_service.dart';
 import '../services/realtime_service.dart';
 import '../services/session_service.dart';
 import '../services/tts_chat_service.dart';
+import '../services/voice_turn_service.dart';
 
 /// Auth service — provided as override from main()
 final authServiceProvider = Provider<BaseAuthService>((ref) {
@@ -43,4 +45,16 @@ final realtimeServiceProvider = Provider<RealtimeService>((ref) {
 /// TTS chat service — provided as override from main()
 final ttsChatServiceProvider = Provider<TtsChatService>((ref) {
   throw UnimplementedError('ttsChatServiceProvider must be overridden');
+});
+
+/// Voice-in turn service (`POST /tts/voice`) — overridden from main().
+final voiceTurnServiceProvider = Provider<VoiceTurnService>((ref) {
+  throw UnimplementedError('voiceTurnServiceProvider must be overridden');
+});
+
+/// Filler audio service — preloads "hmm..." / "let me think..." clips at
+/// cold start so they can be played instantly during `THINKING`. Overridden
+/// from main() so its preload lifecycle is tied to app startup.
+final fillerAudioServiceProvider = Provider<FillerAudioService>((ref) {
+  throw UnimplementedError('fillerAudioServiceProvider must be overridden');
 });
