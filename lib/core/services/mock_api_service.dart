@@ -81,8 +81,7 @@ class MockApiService extends ApiService {
     return {
       'remaining_seconds': 420,
       'total_seconds': 600,
-      'sessions_today': 0,
-      'max_sessions': 1,
+      'membership_tier': 'free',
     };
   }
 

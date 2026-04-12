@@ -342,8 +342,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
 
     final remainingSeconds = quota['remaining_seconds'] as int? ?? 0;
     final totalSeconds = quota['total_seconds'] as int? ?? 600;
-    final sessionsToday = quota['sessions_today'] as int? ?? 0;
-    final maxSessions = quota['max_sessions'] as int? ?? 1;
+    final membershipTier = quota['membership_tier'] as String? ?? 'free';
     final progress = totalSeconds > 0 ? remainingSeconds / totalSeconds : 0.0;
     final minutes = remainingSeconds ~/ 60;
     final seconds = remainingSeconds % 60;
@@ -390,7 +389,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              '$sessionsToday / $maxSessions sessions used today',
+              membershipTier[0].toUpperCase() + membershipTier.substring(1),
               style: AppTypography.caption.copyWith(color: AppColors.warmGray),
             ),
           ],

@@ -36,25 +36,13 @@ class SessionInitResult {
   });
 }
 
-/// Why the backend refused a `/session/init`. The API returns two distinct
-/// 403 error codes and the FE shows different copy for each.
-enum QuotaExceededReason {
-  /// `daily_quota_exceeded` — user has burned through their daily seconds.
-  minutesExhausted,
-
-  /// `daily_session_limit_exceeded` — user hit `max_sessions` for today.
-  sessionsExhausted,
-}
-
 class QuotaExceededException implements Exception {
   final String resetAt;
-  final QuotaExceededReason reason;
 
-  QuotaExceededException(this.resetAt, this.reason);
+  QuotaExceededException(this.resetAt);
 
   @override
-  String toString() =>
-      'Quota exceeded (${reason.name}). Resets at $resetAt';
+  String toString() => 'Quota exceeded. Resets at $resetAt';
 }
 
 /// Thrown when `/session/init` returns 400 because the user has no profile
@@ -105,13 +93,8 @@ class SessionService {
 
     if (response.statusCode == 403) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
-      final code = body['error'] as String? ?? '';
-      final reason = code == 'daily_session_limit_exceeded'
-          ? QuotaExceededReason.sessionsExhausted
-          : QuotaExceededReason.minutesExhausted;
       throw QuotaExceededException(
         body['reset_at'] as String? ?? '',
-        reason,
       );
     }
 

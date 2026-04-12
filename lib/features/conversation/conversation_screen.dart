@@ -42,7 +42,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   bool _isConnecting = false;
   bool _quotaExceeded = false;
   String _quotaResetAt = '';
-  QuotaExceededReason _quotaReason = QuotaExceededReason.minutesExhausted;
   Timer? _sessionTimer;
   int _secondsRemaining = 0;
   DateTime? _sessionStartTime;
@@ -198,7 +197,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           _isConnecting = false;
           _quotaExceeded = true;
           _quotaResetAt = e.resetAt;
-          _quotaReason = e.reason;
         });
         ref.invalidate(quotaProvider);
         return;
@@ -507,7 +505,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     // the pre-fetched quota — no API round-trip just to get a 429.
     final canStart =
         quota != null &&
-        quota['max_sessions'] is int &&
         quota['remaining_seconds'] is int &&
         !isQuotaExhausted(quota);
 
@@ -769,13 +766,6 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
             setState(() {
               _quotaExceeded = true;
               _quotaResetAt = '';
-              // Pick the reason from the cached payload so the headline
-              // matches reality. If both are exhausted, minutes wins
-              // (more informative to the user).
-              final remaining = cachedQuota?['remaining_seconds'];
-              _quotaReason = (remaining is int && remaining <= 0)
-                  ? QuotaExceededReason.minutesExhausted
-                  : QuotaExceededReason.sessionsExhausted;
             });
             return;
           }
@@ -870,17 +860,8 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     return 'Come back after $formatted to chat again!';
   }
 
-  /// Headline copy for the quota-exceeded view, picked from the 403 error
-  /// code returned by `/session/init`. When we're showing this view from a
-  /// locally-detected exhausted quota (cached `/session/quota`), we use
-  /// the reason that the cached payload implies — handled by the caller.
   String _quotaHeadline() {
-    switch (_quotaReason) {
-      case QuotaExceededReason.sessionsExhausted:
-        return "You've used all your sessions for today.";
-      case QuotaExceededReason.minutesExhausted:
-        return "You've used all your time for today.";
-    }
+    return "You've used all your time for today.";
   }
 
   Widget _buildQuotaExceededView() {
