@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/personas/persona.dart';
 import '../../core/providers/profile_providers.dart';
 import '../../core/providers/providers.dart';
+import '../../core/services/api_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../shared/utils/date_utils.dart';
 import '../../shared/utils/error_utils.dart';
@@ -220,11 +221,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final name = profile?['name'] as String? ?? 'Unknown';
     final persona = profile?['persona'] as Map<String, dynamic>?;
     final currentFocus = profile?['current_focus'] as String?;
+    final tier = profile?['membership_tier'] as String?;
     final personaId = persona?['id'] as String?;
     final companion = persona?['name'] as String? ?? 'Not set';
-    final subtitle = (currentFocus != null && currentFocus.isNotEmpty)
-        ? 'Companion: $companion · $currentFocus'
-        : 'Companion: $companion';
+    final tierLabel = tier != null
+        ? '${tier[0].toUpperCase()}${tier.substring(1)}'
+        : null;
+    final parts = <String>[
+      'Companion: $companion',
+      if (currentFocus != null && currentFocus.isNotEmpty) currentFocus,
+    ];
+    final subtitle = parts.join(' · ');
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -261,7 +268,33 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(name, style: AppTypography.bodyMedium),
+                      Row(
+                        children: [
+                          Text(name, style: AppTypography.bodyMedium),
+                          if (tierLabel != null && tier != 'free') ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppColors.warmStoneSurface,
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.pill,
+                                ),
+                              ),
+                              child: Text(
+                                tierLabel,
+                                style: AppTypography.micro.copyWith(
+                                  color: AppColors.warmGray,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
                       const SizedBox(height: 4),
                       Text(
                         subtitle,
@@ -349,6 +382,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     final timeText =
         '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
     final isLow = remainingSeconds < 60;
+    final tierLabel =
+        membershipTier[0].toUpperCase() + membershipTier.substring(1);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -356,44 +391,97 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
         borderRadius: BorderRadius.circular(AppRadius.large),
         boxShadow: AppShadows.outlineRing,
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("Today's quota", style: AppTypography.bodyMedium),
-            const SizedBox(height: 12),
-            Row(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _openMembershipSheet(quota),
+          borderRadius: BorderRadius.circular(AppRadius.large),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: progress,
-                      minHeight: 6,
-                      backgroundColor: AppColors.borderSubtle,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        isLow ? Colors.red.shade400 : AppColors.warmGray,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        "Today's quota",
+                        style: AppTypography.bodyMedium,
                       ),
                     ),
-                  ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.warmStoneSurface,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Text(
+                        tierLabel,
+                        style: AppTypography.micro.copyWith(
+                          color: AppColors.warmGray,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      size: 14,
+                      color: AppColors.warmGray,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  '$timeText left',
-                  style: AppTypography.caption.copyWith(
-                    color: isLow ? Colors.red.shade400 : AppColors.darkGray,
-                  ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: progress,
+                          minHeight: 6,
+                          backgroundColor: AppColors.borderSubtle,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            isLow ? Colors.red.shade400 : AppColors.warmGray,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '$timeText left',
+                      style: AppTypography.caption.copyWith(
+                        color: isLow ? Colors.red.shade400 : AppColors.darkGray,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 8),
-            Text(
-              membershipTier[0].toUpperCase() + membershipTier.substring(1),
-              style: AppTypography.caption.copyWith(color: AppColors.warmGray),
-            ),
-          ],
+          ),
         ),
+      ),
+    );
+  }
+
+  void _openMembershipSheet(Map<String, dynamic> quota) {
+    HapticFeedback.selectionClick();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.white,
+      showDragHandle: true,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _MembershipSheet(
+        onRedeemed: () {
+          ref.invalidate(profileProvider);
+          ref.invalidate(quotaProvider);
+        },
       ),
     );
   }
@@ -492,6 +580,252 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       child: Text(
         'VieSpeak v1.0.0',
         style: AppTypography.micro.copyWith(color: AppColors.warmGray),
+      ),
+    );
+  }
+}
+
+class _MembershipSheet extends ConsumerStatefulWidget {
+  final VoidCallback onRedeemed;
+
+  const _MembershipSheet({required this.onRedeemed});
+
+  @override
+  ConsumerState<_MembershipSheet> createState() => _MembershipSheetState();
+}
+
+class _MembershipSheetState extends ConsumerState<_MembershipSheet> {
+  final _codeController = TextEditingController();
+  bool _redeeming = false;
+
+  static const _tiers = [
+    ('free', 'Free', '10 min / day'),
+    ('silver', 'Silver', '30 min / day'),
+    ('gold', 'Gold', '60 min / day'),
+    ('premium', 'Premium', '120 min / day'),
+  ];
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _redeem() async {
+    final code = _codeController.text.trim();
+    if (code.isEmpty) return;
+    setState(() => _redeeming = true);
+    try {
+      final api = ref.read(apiServiceProvider);
+      final result = await api.redeemPromoCode(code);
+      final message = result['message'] as String? ?? 'Code redeemed!';
+      _codeController.clear();
+      // Refresh providers so both the sheet and profile page update.
+      ref.invalidate(quotaProvider);
+      ref.invalidate(profileProvider);
+      widget.onRedeemed();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message)),
+        );
+      }
+    } on PromoRedeemException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.userMessage)),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(friendlyError(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _redeeming = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final quotaAsync = ref.watch(quotaProvider);
+    final currentTier =
+        quotaAsync.valueOrNull?['membership_tier'] as String? ?? 'free';
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          24,
+          8,
+          24,
+          MediaQuery.of(context).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Membership', style: AppTypography.sectionHeading),
+            const SizedBox(height: 20),
+
+            // Tier list
+            for (final (id, label, quota) in _tiers) ...[
+              _TierRow(
+                label: label,
+                quota: quota,
+                isCurrent: id == currentTier,
+              ),
+              if (id != _tiers.last.$1) const SizedBox(height: 8),
+            ],
+
+            const SizedBox(height: 24),
+            Divider(height: 1, color: AppColors.borderSubtle),
+            const SizedBox(height: 24),
+
+            // Promo code section
+            Text('Have a promo code?', style: AppTypography.bodyMedium),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _codeController,
+                    enabled: !_redeeming,
+                    textCapitalization: TextCapitalization.characters,
+                    style: AppTypography.bodyStandard,
+                    decoration: InputDecoration(
+                      hintText: 'Enter code',
+                      hintStyle: AppTypography.bodyStandard.copyWith(
+                        color: AppColors.warmGray,
+                      ),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.card),
+                        borderSide: const BorderSide(
+                          color: AppColors.borderSubtle,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.card),
+                        borderSide: const BorderSide(
+                          color: AppColors.borderSubtle,
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppRadius.card),
+                        borderSide: const BorderSide(
+                          color: AppColors.warmGray,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) => _redeem(),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                SizedBox(
+                  height: 44,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppColors.warmStoneSurface,
+                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                      boxShadow: AppShadows.warmLift,
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: _redeeming ? null : _redeem,
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Center(
+                            child: _redeeming
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: AppColors.black,
+                                    ),
+                                  )
+                                : Text(
+                                    'Redeem',
+                                    style: AppTypography.button.copyWith(
+                                      color: AppColors.black,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TierRow extends StatelessWidget {
+  final String label;
+  final String quota;
+  final bool isCurrent;
+
+  const _TierRow({
+    required this.label,
+    required this.quota,
+    required this.isCurrent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: isCurrent ? AppColors.warmStoneSurface : AppColors.white,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(
+          color: isCurrent ? AppColors.warmGray.withValues(alpha: 0.3) : AppColors.borderSubtle,
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: AppTypography.bodyMedium.copyWith(
+                color: isCurrent ? AppColors.black : AppColors.darkGray,
+              ),
+            ),
+          ),
+          Text(
+            quota,
+            style: AppTypography.caption.copyWith(color: AppColors.warmGray),
+          ),
+          if (isCurrent) ...[
+            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.white,
+                borderRadius: BorderRadius.circular(AppRadius.pill),
+              ),
+              child: Text(
+                'Current',
+                style: AppTypography.micro.copyWith(
+                  color: AppColors.warmGray,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

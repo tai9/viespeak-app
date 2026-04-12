@@ -14,6 +14,23 @@ class SessionExpiredException implements Exception {
   String toString() => 'Session expired — please sign in again.';
 }
 
+class PromoRedeemException implements Exception {
+  final String code;
+
+  PromoRedeemException(this.code);
+
+  String get userMessage => switch (code) {
+    'invalid_code' => 'This code doesn\'t exist. Check and try again.',
+    'code_expired' => 'This code has expired.',
+    'code_maxed_out' => 'This code has reached its usage limit.',
+    'already_redeemed' => 'You\'ve already used this code.',
+    _ => 'Something went wrong. Please try again.',
+  };
+
+  @override
+  String toString() => userMessage;
+}
+
 class ApiService {
   static const _timeout = Duration(seconds: 15);
 
@@ -24,10 +41,10 @@ class ApiService {
   String get _baseUrl => Env.apiBaseUrl;
 
   Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        if (_authService.token != null)
-          'Authorization': 'Bearer ${_authService.token}',
-      };
+    'Content-Type': 'application/json',
+    if (_authService.token != null)
+      'Authorization': 'Bearer ${_authService.token}',
+  };
 
   /// Check for 401 and sign the user out automatically.
   void _checkUnauthorized(http.Response response) {
@@ -48,10 +65,9 @@ class ApiService {
   /// instead of silently pretending onboarding is incomplete.
   Future<Map<String, dynamic>?> getProfile() async {
     debugPrint('[ApiService] GET /api/profile');
-    final response = await http.get(
-      Uri.parse('$_baseUrl/api/profile'),
-      headers: _headers,
-    ).timeout(_timeout);
+    final response = await http
+        .get(Uri.parse('$_baseUrl/api/profile'), headers: _headers)
+        .timeout(_timeout);
     debugPrint('[ApiService] /api/profile → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200) {
@@ -71,14 +87,13 @@ class ApiService {
     required String personaId,
   }) async {
     debugPrint('[ApiService] POST /api/profile personaId=$personaId');
-    final response = await http.post(
-      Uri.parse('$_baseUrl/api/profile'),
-      headers: _headers,
-      body: jsonEncode({
-        'name': name,
-        'persona_id': personaId,
-      }),
-    ).timeout(_timeout);
+    final response = await http
+        .post(
+          Uri.parse('$_baseUrl/api/profile'),
+          headers: _headers,
+          body: jsonEncode({'name': name, 'persona_id': personaId}),
+        )
+        .timeout(_timeout);
     debugPrint('[ApiService] /api/profile → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200 || response.statusCode == 201) {
@@ -95,11 +110,13 @@ class ApiService {
   /// Returns the newly selected persona.
   Future<Persona> updatePersona(String personaId) async {
     debugPrint('[ApiService] PUT /api/profile/persona id=$personaId');
-    final response = await http.put(
-      Uri.parse('$_baseUrl/api/profile/persona'),
-      headers: _headers,
-      body: jsonEncode({'persona_id': personaId}),
-    ).timeout(_timeout);
+    final response = await http
+        .put(
+          Uri.parse('$_baseUrl/api/profile/persona'),
+          headers: _headers,
+          body: jsonEncode({'persona_id': personaId}),
+        )
+        .timeout(_timeout);
     debugPrint('[ApiService] /api/profile/persona → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200) {
@@ -117,10 +134,9 @@ class ApiService {
   /// Rarely changes; cache locally via a Riverpod FutureProvider.
   Future<List<Persona>> getPersonas() async {
     debugPrint('[ApiService] GET /api/personas');
-    final response = await http.get(
-      Uri.parse('$_baseUrl/api/personas'),
-      headers: _headers,
-    ).timeout(_timeout);
+    final response = await http
+        .get(Uri.parse('$_baseUrl/api/personas'), headers: _headers)
+        .timeout(_timeout);
     debugPrint('[ApiService] /api/personas → ${response.statusCode}');
     _checkUnauthorized(response);
     if (response.statusCode == 200) {
@@ -136,10 +152,9 @@ class ApiService {
   /// GET /session/quota — returns remaining quota for today
   Future<Map<String, dynamic>?> getQuota() async {
     debugPrint('[ApiService] GET /session/quota');
-    final response = await http.get(
-      Uri.parse('$_baseUrl/session/quota'),
-      headers: _headers,
-    ).timeout(_timeout);
+    final response = await http
+        .get(Uri.parse('$_baseUrl/session/quota'), headers: _headers)
+        .timeout(_timeout);
     debugPrint(
       '[ApiService] /session/quota → ${response.statusCode} '
       'body=${response.body}',
@@ -151,13 +166,36 @@ class ApiService {
     return null;
   }
 
+  /// POST /api/promo/redeem — redeem a promo code to upgrade membership tier.
+  /// Returns the new tier and a human-readable message on success.
+  /// Throws with a user-facing message on 400 errors.
+  Future<Map<String, dynamic>> redeemPromoCode(String code) async {
+    final url = '$_baseUrl/api/promo/redeem';
+    final reqBody = jsonEncode({'code': code});
+    debugPrint('[ApiService] POST $url');
+    debugPrint('[ApiService] body: $reqBody');
+    final response = await http
+        .post(Uri.parse(url), headers: _headers, body: reqBody)
+        .timeout(_timeout);
+    debugPrint(
+      '[ApiService] /api/promo/redeem → ${response.statusCode} '
+      'body=${response.body}',
+    );
+    _checkUnauthorized(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      return body;
+    }
+    final error = body['error'] as String? ?? 'unknown_error';
+    throw PromoRedeemException(error);
+  }
+
   /// GET /api/memories — returns list of memory entries
   Future<List<Map<String, dynamic>>> getMemories() async {
     debugPrint('[ApiService] GET /api/memories');
-    final response = await http.get(
-      Uri.parse('$_baseUrl/api/memories'),
-      headers: _headers,
-    ).timeout(_timeout);
+    final response = await http
+        .get(Uri.parse('$_baseUrl/api/memories'), headers: _headers)
+        .timeout(_timeout);
     debugPrint(
       '[ApiService] /api/memories → ${response.statusCode} '
       '(${response.body.length} bytes)',

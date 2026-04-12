@@ -86,6 +86,15 @@ class MockApiService extends ApiService {
   }
 
   @override
+  Future<Map<String, dynamic>> redeemPromoCode(String code) async {
+    await Future.delayed(const Duration(milliseconds: 400));
+    if (code.toUpperCase() == 'GOLD2024') {
+      return {'membership_tier': 'gold', 'message': 'Upgraded to Gold'};
+    }
+    throw PromoRedeemException('invalid_code');
+  }
+
+  @override
   Future<List<Map<String, dynamic>>> getMemories() async {
     await Future.delayed(const Duration(milliseconds: 300));
     return [
